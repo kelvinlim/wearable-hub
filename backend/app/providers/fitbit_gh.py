@@ -281,6 +281,12 @@ def list_subscriptions(subscriber_id: str) -> list[dict]:
     return resp.json().get("subscriptions", [])
 
 
+def parse_health_user_id(subscription: dict) -> str | None:
+    """Extract the bare healthUserId from a subscription's `user` field ("users/{id}")."""
+    user = subscription.get("user") or ""
+    return user.split("/", 1)[1] if user.startswith("users/") else (user or None)
+
+
 def create_subscription(
     subscriber_id: str, health_user_id: str, data_types: list[str] | None = None
 ) -> dict:

@@ -95,6 +95,9 @@ class ProviderAccount(Base):
     token_expires_at: Mapped[datetime | None] = mapped_column(DateTime)
     scope: Mapped[str | None] = mapped_column(Text)
     provider_user_id: Mapped[str | None] = mapped_column(String(255), index=True)
+    # Google Health public per-user id (from a subscription's `user` field / webhook
+    # payloads). Differs from the OAuth `sub` above; used to link inbound webhook data.
+    health_user_id: Mapped[str | None] = mapped_column(String(255), index=True)
     raw_token_json: Mapped[dict | None] = mapped_column(JSON)
 
     registered: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -136,11 +139,11 @@ class Subscription(Base):
     __tablename__ = "subscriptions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    provider_account_id: Mapped[int] = mapped_column(
-        ForeignKey("provider_accounts.id"), nullable=False
-    )
+    # Nullable: a subscription found via sync may not yet be linked to a local account.
+    provider_account_id: Mapped[int | None] = mapped_column(ForeignKey("provider_accounts.id"))
     subscriber_id: Mapped[str | None] = mapped_column(String(255))
     provider_subscription_id: Mapped[str | None] = mapped_column(String(255), index=True)
+    health_user_id: Mapped[str | None] = mapped_column(String(255), index=True)
     data_types: Mapped[list | None] = mapped_column(JSON)
     status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

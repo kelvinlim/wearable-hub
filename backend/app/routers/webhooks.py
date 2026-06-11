@@ -109,15 +109,30 @@ async def google_health(request: Request, db: Session = Depends(get_db)) -> Resp
         health_user_id = data.get("healthUserId")
         acct = None
         if health_user_id:
-            # NOTE: provider_user_id is currently the OAuth `sub`, which may differ from
-            # healthUserId. TODO(health-user-id): capture healthUserId at enrollment so this
-            # link resolves; until then data may land with a null account.
+            hid = str(health_user_id)
+            # healthUserId (Google's public per-user id) is captured on provider_accounts via
+            # /admin/subscriptions/sync; match on it, not the OAuth `sub`.
             acct = db.scalar(
                 select(ProviderAccount).where(
                     ProviderAccount.provider == fitbit_gh.NAME,
-                    ProviderAccount.provider_user_id == str(health_user_id),
+                    ProviderAccount.health_user_id == hid,
                 )
             )
+            if acct is None:
+                # First-webhook fallback link: if exactly one registered account still lacks a
+                # healthUserId, this notification must be theirs. Same conservative rule as sync.
+                candidates = list(
+                    db.scalars(
+                        select(ProviderAccount).where(
+                            ProviderAccount.provider == fitbit_gh.NAME,
+                            ProviderAccount.registered.is_(True),
+                            ProviderAccount.health_user_id.is_(None),
+                        )
+                    )
+                )
+                if len(candidates) == 1:
+                    acct = candidates[0]
+                    acct.health_user_id = hid
 
         db.add(
             HealthData(

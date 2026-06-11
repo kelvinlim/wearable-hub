@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import get_db
-from app.models import ProjectSubscriber, ProviderAccount, Study, Subject
+from app.models import ProjectSubscriber, ProviderAccount, Study, Subject, Subscription
 from app.providers import fitbit_gh
 from app.schemas import (
     StudyCreate,
@@ -138,6 +138,125 @@ def get_project_subscriber(db: Session = Depends(get_db)) -> dict:
         "subscriber_id": row.subscriber_id,
         "subscriber_name": row.subscriber_name,
         "webhook_url": row.webhook_url,
+    }
+
+
+@router.post("/subscriptions/sync")
+def sync_subscriptions(
+    subject_id: int | None = None, db: Session = Depends(get_db)
+) -> dict:
+    """Reconcile per-user (Tier-2) subscriptions from Google into the local DB.
+
+    Under AUTOMATIC policy Google creates a subscription per subject on consent; its `user`
+    field carries the public `healthUserId` (which we can't get from the subject's token).
+    This LISTs those subscriptions, upserts `subscriptions` rows, and links each `healthUserId`
+    to its `provider_account` so inbound webhook data resolves to the right subject.
+
+    Linking is conservative — never guessed:
+    - A subscription whose `healthUserId` already matches an account links directly.
+    - `subject_id` (optional): bind the single still-unlinked subscription to that subject's
+      registered account. Use this right after enrolling a specific subject.
+    - Otherwise, only when exactly one registered account and one subscription are both still
+      unlinked (the simple sequential-enrollment case) are they paired. Ambiguity is reported.
+    """
+    settings = get_settings()
+    sub_row = db.scalar(
+        select(ProjectSubscriber).where(ProjectSubscriber.project_id == settings.gh_project_id)
+    )
+    if sub_row is None or not sub_row.subscriber_id:
+        raise HTTPException(
+            status_code=400, detail="No project subscriber registered; POST /admin/subscriber first."
+        )
+    try:
+        google_subs = fitbit_gh.list_subscriptions(sub_row.subscriber_id)
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"google_status": exc.response.status_code, "google_body": exc.response.text},
+        ) from exc
+
+    # Upsert a row per Google subscription; link directly when the healthUserId is known.
+    for gs in google_subs:
+        name = gs.get("name")
+        hid = fitbit_gh.parse_health_user_id(gs)
+        row = db.scalar(
+            select(Subscription).where(Subscription.provider_subscription_id == name)
+        )
+        if row is None:
+            row = Subscription(provider_subscription_id=name)
+            db.add(row)
+        row.subscriber_id = sub_row.subscriber_id
+        row.health_user_id = hid
+        row.data_types = gs.get("dataTypes")
+        row.status = "active"
+        if hid and row.provider_account_id is None:
+            acct = db.scalar(
+                select(ProviderAccount).where(
+                    ProviderAccount.provider == fitbit_gh.NAME,
+                    ProviderAccount.health_user_id == hid,
+                )
+            )
+            if acct:
+                row.provider_account_id = acct.id
+    db.flush()
+
+    linked: list[dict] = []
+
+    def _link(sub: Subscription, acct: ProviderAccount) -> None:
+        acct.health_user_id = sub.health_user_id
+        sub.provider_account_id = acct.id
+        linked.append(
+            {"provider_account_id": acct.id, "subject_id": acct.subject_id,
+             "health_user_id": sub.health_user_id}
+        )
+
+    unlinked_subs = list(
+        db.scalars(
+            select(Subscription).where(
+                Subscription.provider_account_id.is_(None),
+                Subscription.health_user_id.is_not(None),
+            )
+        )
+    )
+    unlinked_accts = list(
+        db.scalars(
+            select(ProviderAccount).where(
+                ProviderAccount.provider == fitbit_gh.NAME,
+                ProviderAccount.registered.is_(True),
+                ProviderAccount.health_user_id.is_(None),
+            )
+        )
+    )
+
+    if subject_id is not None:
+        # Deterministic: bind the single unlinked subscription to this subject's account.
+        target = db.scalar(
+            select(ProviderAccount).where(
+                ProviderAccount.subject_id == subject_id,
+                ProviderAccount.provider == fitbit_gh.NAME,
+            )
+        )
+        if target is None:
+            raise HTTPException(status_code=404, detail="No fitbit account for that subject")
+        if target.health_user_id is None:
+            if len(unlinked_subs) != 1:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Expected exactly 1 unlinked subscription, found {len(unlinked_subs)}",
+                )
+            _link(unlinked_subs[0], target)
+            unlinked_subs, unlinked_accts = [], []
+    elif len(unlinked_subs) == 1 and len(unlinked_accts) == 1:
+        # Sequential-enrollment case: the one new subscription belongs to the one new account.
+        _link(unlinked_subs[0], unlinked_accts[0])
+        unlinked_subs, unlinked_accts = [], []
+
+    db.commit()
+    return {
+        "google_subscriptions": len(google_subs),
+        "linked": linked,
+        "unlinked_subscriptions": len(unlinked_subs),
+        "unlinked_accounts": len(unlinked_accts),
     }
 
 
