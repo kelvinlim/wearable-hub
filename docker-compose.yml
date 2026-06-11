@@ -1,0 +1,39 @@
+# MariaDB + FastAPI backend. Frontend (Vite) is added in a later slice.
+# podman-compose compatible.
+
+services:
+  db:
+    image: mariadb:11
+    environment:
+      MARIADB_DATABASE: ${DB_NAME:-wearable_hub}
+      MARIADB_USER: ${DB_USER:-wearable}
+      MARIADB_PASSWORD: ${DB_PASSWORD:-wearable}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpw}
+    ports:
+      # Host 3306 is taken by a native MariaDB; expose on 3307 for host-side inspection.
+      # The backend talks to `db:3306` over the internal compose network regardless.
+      - "3307:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build: ./backend
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: mysql+pymysql://${DB_USER:-wearable}:${DB_PASSWORD:-wearable}@db:3306/${DB_NAME:-wearable_hub}
+    ports:
+      # Host 8000 is reserved by nginx for /qualtrics_dashboard/; use 8010.
+      # nginx proxies the public paths (/enroll, /webhooks) here.
+      - "8010:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db_data:

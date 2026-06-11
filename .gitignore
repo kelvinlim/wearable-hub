@@ -1,0 +1,14 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+node_modules/
+dist/
+
+# ignore the code directory links
+fitbitreg
+garminrec
+garmin_django

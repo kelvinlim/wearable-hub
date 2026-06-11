@@ -41,6 +41,26 @@ from prior art: PKCE OAuth flow in [fitbitreg/fitbit_flask.py](fitbitreg/fitbit_
   OAuth client runs in testing mode capped at 100 manually-added test users. Exact scope
   strings come from the Cloud Console "Data Access" page — to be filled into config.
 
+## Cloud project & account (decision)
+
+Use the **institutional umn.edu org**, not a personal Google account, for everything that
+touches real subject data. Current project: **`fitbitdata-499001`** (project number
+`569496656627`), under `umn.edu`.
+
+- **Why umn.edu over a personal gmail:** (1) IRB/data governance — identifiable subject
+  health data must sit under institutional control, not a personal account; (2) continuity —
+  a personal-account project orphans the OAuth client + subscriptions on staff turnover;
+  (3) the Restricted-scope **production security review (CASA)** is far more likely to pass
+  for a verified organization than for a personal gmail requesting Restricted *health*
+  scopes; (4) billing belongs on institutional, not personal, accounts.
+- **Dev consent screen:** External / Testing, with `lim.kelvino@gmail.com` + a teammate
+  added as **test users** (≤100 in testing mode).
+- **Risk to verify (umn.edu Workspace may lock these down):** that you can (a) set the
+  consent screen to **External**, (b) add **non-UMN test users** (subjects likely use
+  personal Google accounts), and (c) create OAuth clients with **Restricted scopes** /
+  publish externally. **Fallback if blocked:** request a UMN OIT exception — do *not* fall
+  back to a personal project, which only defers the governance + production-review problems.
+
 ## Target layout (monorepo at project root)
 
 ```
@@ -100,11 +120,30 @@ plaintext storage.
    `oauth2.googleapis.com/token` with `client_id/secret`, `code`, `code_verifier`,
    `redirect_uri`. Store `access_token`/`refresh_token`/`expires_at`/`scope`/`provider_user_id`,
    set `registered=True`. Render success page.
-4. After token: ensure project subscriber is registered (idempotent, cached), then
-   `POST .../subscriptions` for this user; persist into `subscriptions`.
+4. After token: look up the project subscriber (registered out-of-band via the one-time
+   admin path — see finding below); if present, `POST .../subscriptions` for this user
+   (Tier-2 only) and persist into `subscriptions`. Do NOT register the subscriber here.
 
 **Token refresh** (`providers/fitbit_gh.py`): helper refreshes via `refresh_token` grant
 when `token_expires_at` is near; updates stored tokens. Reused before any data read.
+
+> **Finding (2026-06-11) — subscriber registration is a PROJECT op, not a user op.**
+> The first live enrollment succeeded (token exchange, encrypted storage, refresh token,
+> `provider_user_id` from the id_token all verified). But the inline Tier-1
+> `POST /v4/projects/{project}/subscribers` call returned **403** because it was made with
+> the *research subject's* user OAuth token — a subject's token is never authorized for
+> project-level operations. Correct model:
+> - **Tier 1 (once per project, admin/service-account):** register the project subscriber
+>   (webhook endpoint). Uses **project credentials** (a service account with the right IAM
+>   role), idempotent, run out-of-band — NOT during enrollment.
+> - **Tier 2 (per enrollment):** create the per-user subscription referencing the
+>   already-registered subscriber.
+>
+> So the enroll callback must do Tier-2 only; Tier-1 moves to a one-time admin path. The
+> subscriber id is persisted (`project_subscribers` table) so Tier-2 can reference it.
+> The exact subscription request/response shapes and which credential Tier-2 uses are still
+> unverified against Google's docs — flagged TODO in code (current code assumes project
+> credentials for both, with the user identified by `provider_user_id` in the body).
 
 **Webhook receiver ([webhooks.py](backend/app/routers/webhooks.py), patterned on garminrec):**
 - `POST /webhooks/google-health` — the registered subscriber endpoint. Parse notification,
