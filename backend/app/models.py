@@ -9,15 +9,18 @@ Encrypted token columns (`access_token`, `refresh_token`) hold Fernet ciphertext
 see `app/crypto.py`.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 
 from sqlalchemy import (
     JSON,
     Boolean,
+    Date,
     DateTime,
+    Float,
     ForeignKey,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -149,6 +152,95 @@ class Subscription(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     provider_account: Mapped["ProviderAccount"] = relationship(back_populates="subscriptions")
+
+
+class HealthDataPoint(Base):
+    """One pulled intraday data point (from the dataPoints `list` read).
+
+    Google Health *webhooks carry no values* — they only say which (user, dataType, interval)
+    changed. The actual numbers are pulled from the dataPoints API. This is the raw-point
+    fidelity layer; the daily roll-up lives in `daily_health`. `point_key` makes re-pulls
+    idempotent (dataPoint resource `name` if present, else `{datatype}|{startTime}`).
+    """
+
+    __tablename__ = "health_data_points"
+    __table_args__ = (
+        UniqueConstraint("provider_account_id", "datatype", "point_key", name="uq_hdp_acct_dt_key"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider_account_id: Mapped[int] = mapped_column(
+        ForeignKey("provider_accounts.id"), nullable=False
+    )
+    datatype: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    local_date: Mapped[date | None] = mapped_column(Date, index=True)
+    start_time: Mapped[datetime | None] = mapped_column(DateTime)  # UTC
+    end_time: Mapped[datetime | None] = mapped_column(DateTime)  # UTC
+    tz_offset_seconds: Mapped[int | None] = mapped_column()
+    value: Mapped[float | None] = mapped_column(Float)  # scalar where applicable
+    point_key: Mapped[str] = mapped_column(String(255), nullable=False)
+    payload: Mapped[dict | None] = mapped_column(JSON)  # full raw dataPoint
+    pulled_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class DailyHealth(Base):
+    """One consolidated row per subject per LOCAL day. Hybrid: typed key columns + JSON.
+
+    Summable metrics come from Google's `dailyRollUp` (server-computed daily totals in the
+    subject's local timezone); sleep is aggregated from listed stages. Recomputed (upsert) as
+    new data for the day arrives, so values self-heal on corrections/deletes.
+    """
+
+    __tablename__ = "daily_health"
+    __table_args__ = (
+        UniqueConstraint("provider_account_id", "local_date", name="uq_daily_acct_date"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider_account_id: Mapped[int] = mapped_column(
+        ForeignKey("provider_accounts.id"), nullable=False
+    )
+    subject_id: Mapped[int | None] = mapped_column(ForeignKey("subjects.id"), index=True)
+    local_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    tz_offset_seconds: Mapped[int | None] = mapped_column()
+
+    # Typed key columns (headline numbers); full per-metric detail lives in `metrics`.
+    steps: Mapped[int | None] = mapped_column()
+    distance_m: Mapped[float | None] = mapped_column(Float)
+    calories: Mapped[float | None] = mapped_column(Float)
+    floors: Mapped[int | None] = mapped_column()
+    sleep_minutes: Mapped[int | None] = mapped_column()
+
+    metrics: Mapped[dict | None] = mapped_column(JSON)
+    point_count: Mapped[int] = mapped_column(default=0, nullable=False)
+    pulled_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ConsolidationState(Base):
+    """Durable dirty-day queue: which (account, local_date) need (re)consolidation.
+
+    Webhooks mark days `pending`; the background drain / nightly job / on-demand endpoint
+    process them. Survives restarts so no day is lost if a background task dies.
+    """
+
+    __tablename__ = "consolidation_state"
+    __table_args__ = (
+        UniqueConstraint("provider_account_id", "local_date", name="uq_consol_acct_date"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider_account_id: Mapped[int] = mapped_column(
+        ForeignKey("provider_accounts.id"), nullable=False
+    )
+    local_date: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False, index=True)
+    requested_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    detail: Mapped[str | None] = mapped_column(Text)
 
 
 class HealthData(Base):

@@ -36,6 +36,17 @@ schema; tokens encrypted at rest. Researcher auth/RBAC and Garmin are deferred.
   data points landed and linked for the test subject.
 - **Minimal admin API** — create study, create subject (auto entry code), list subjects +
   registration status. Unprotected for Milestone 1 (auth deferred).
+- **Daily consolidation** — one row per subject per **local** day in `daily_health` (hybrid:
+  typed `steps`/`distance_m`/`calories`/`floors`/`sleep_minutes` columns + a JSON `metrics`
+  blob). Since webhooks carry no values, each touched subject-day is *pulled* from Google and
+  aggregated: summable metrics from Google's **`dailyRollUp`** (server-computed daily totals),
+  **sleep** from listed stages (AWAKE/LIGHT/DEEP/REM minutes), raw intraday points persisted in
+  `health_data_points`. Three triggers: real-time (webhook marks the day dirty in
+  `consolidation_state` → `BackgroundTasks` drain), a nightly safety-net
+  (`python -m app.jobs.nightly`), and on-demand `POST /admin/subjects/{id}/consolidate?start=&end=`
+  (backfill). Idempotent (unique keys); revoked tokens mark the day `error` and flip the account.
+  Verified end-to-end: subject 3 / 2026-06-11 — steps/distance/calories/sleep populated, raw-point
+  sum == rollup, re-run produced no duplicates.
 - **Revocation handling** — three converging triggers flip `provider_account.registered` and
   drop stored tokens: (1) **outbound** `POST /admin/subjects/{id}/revoke` revokes the grant at
   Google then marks the account revoked; (2) **reactive** — a token refresh returning
@@ -82,15 +93,18 @@ schema; tokens encrypted at rest. Researcher auth/RBAC and Garmin are deferred.
 
 - **Frontend (Vite)** — enroll page + minimal researcher page are still server-rendered
   placeholders; not scaffolded as React.
-- **Data-read endpoint** — no endpoint yet refreshes tokens before a pull read, so the
-  reactive `GrantRevokedError` path (built, raised by `refresh()`) has no caller wired in
-  until that lands.
 - **Inbound deregistration shape** — the deregistration-webhook handler is best-effort; the
   real Google payload is undocumented/unobserved. Confirm and tighten once one is captured.
-- **Async processing of `health_data`** — payloads land raw; downstream normalization/
-  parsing into typed tables is deferred.
-- Frontend (Vite): enroll page + minimal researcher page — not scaffolded.
-- Token-refresh-before-read path exists but is unexercised.
+- **Consolidation follow-ups** — deep *historical* sleep/height backfill is bounded (those
+  types aren't civil-time filterable, so we page newest-first and stop at the target day —
+  fine for recent days, limited for far-back dates). Real-time drain uses in-process
+  `BackgroundTasks`; promote to a standalone worker if pull latency/volume grows. floors &
+  calories have no raw intraday points (rollup-only — not listable).
+- **Cron wiring** — `app.jobs.nightly` is runnable but not yet scheduled (no in-repo
+  scheduler); wire to cron or a `/schedule` routine.
+- **Scheduled token refresh before reads** — consolidation refreshes per pull; there's still
+  no standalone data-read endpoint, but the reactive `GrantRevokedError` path is now exercised
+  by consolidation.
 
 ### Deferred (later milestones)
 

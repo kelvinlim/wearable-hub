@@ -21,10 +21,11 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import consolidation
 from app.accounts import mark_revoked
 from app.config import get_settings
 from app.db import get_db
@@ -113,7 +114,9 @@ def _resolve_account(db: Session, hid: str) -> "ProviderAccount | None":
 
 
 @router.post("/google-health")
-async def google_health(request: Request, db: Session = Depends(get_db)) -> Response:
+async def google_health(
+    request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)
+) -> Response:
     """Receive a Google Health notification or verification probe.
 
     Returns 401 on bad/missing auth; 200 otherwise (even on internal processing error).
@@ -174,6 +177,7 @@ async def google_health(request: Request, db: Session = Depends(get_db)) -> Resp
             return Response(status_code=200)
 
         acct_cache: dict[str, int | None] = {}
+        dirty: dict[int, set] = {}  # account_id -> set of local dates touched
         for item in items:
             data = item.get("data") if isinstance(item, dict) else None
             if not isinstance(data, dict):
@@ -196,7 +200,17 @@ async def google_health(request: Request, db: Session = Depends(get_db)) -> Resp
                     payload=item,
                 )
             )
+            if acct_id is not None:
+                dirty.setdefault(acct_id, set()).update(consolidation.affected_local_dates(item))
         db.commit()
+
+        # Real-time consolidation: mark the touched subject-days dirty (durable queue) and
+        # drain them in the background, AFTER the fast 200 — keeps the webhook contract.
+        for account_id, dates in dirty.items():
+            if dates:
+                consolidation.mark_dirty(db, account_id, dates)
+        if any(dates for dates in dirty.values()):
+            background_tasks.add_task(consolidation.run_due_background)
     except Exception:  # noqa: BLE001 — never let an error reach the provider
         log.exception("Error processing Google Health webhook; returning 200 regardless")
         db.rollback()

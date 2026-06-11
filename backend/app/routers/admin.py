@@ -6,16 +6,25 @@ UNPROTECTED for Milestone 1. TODO(auth-milestone): gate every route behind Googl
 
 import secrets
 import string
+from datetime import date, timedelta
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app import consolidation
 from app.accounts import revoke_account
 from app.config import get_settings
 from app.db import get_db
-from app.models import ProjectSubscriber, ProviderAccount, Study, Subject, Subscription
+from app.models import (
+    DailyHealth,
+    ProjectSubscriber,
+    ProviderAccount,
+    Study,
+    Subject,
+    Subscription,
+)
 from app.providers import fitbit_gh
 from app.schemas import (
     StudyCreate,
@@ -287,6 +296,70 @@ def revoke_subject(subject_id: int, db: Session = Depends(get_db)) -> dict:
         "revoked_at_google": revoked_at_google,
         "registered": acct.registered,
     }
+
+
+def _fitbit_account(db: Session, subject_id: int) -> ProviderAccount:
+    if db.get(Subject, subject_id) is None:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    acct = db.scalar(
+        select(ProviderAccount).where(
+            ProviderAccount.subject_id == subject_id,
+            ProviderAccount.provider == fitbit_gh.NAME,
+        )
+    )
+    if acct is None:
+        raise HTTPException(status_code=404, detail="No fitbit account for that subject")
+    return acct
+
+
+@router.post("/subjects/{subject_id}/consolidate")
+def consolidate_subject(
+    subject_id: int, start: date, end: date, db: Session = Depends(get_db)
+) -> dict:
+    """On-demand: (re)build daily_health for a subject over [start, end] by pulling from Google.
+    Used for backfilling history and verification. Idempotent per day."""
+    if end < start:
+        raise HTTPException(status_code=400, detail="end must be >= start")
+    if (end - start).days > 120:
+        raise HTTPException(status_code=400, detail="range too large (max 120 days)")
+    acct = _fitbit_account(db, subject_id)
+    days = []
+    d = start
+    while d <= end:
+        state = consolidation.consolidate_day(db, acct, d)
+        days.append({"date": d.isoformat(), "status": state.status, "detail": state.detail})
+        d += timedelta(days=1)
+    return {"subject_id": subject_id, "provider_account_id": acct.id, "days": days}
+
+
+@router.post("/consolidate/run-due")
+def consolidate_run_due(limit: int = 50, db: Session = Depends(get_db)) -> dict:
+    """Drain pending consolidation_state rows (the durable dirty-day queue). What cron calls."""
+    return consolidation.consolidate_due(db, limit=limit)
+
+
+@router.get("/subjects/{subject_id}/daily")
+def list_daily(subject_id: int, db: Session = Depends(get_db)) -> list[dict]:
+    """List a subject's consolidated daily rows (most recent first)."""
+    _fitbit_account(db, subject_id)
+    rows = db.scalars(
+        select(DailyHealth)
+        .where(DailyHealth.subject_id == subject_id)
+        .order_by(DailyHealth.local_date.desc())
+    )
+    return [
+        {
+            "date": r.local_date.isoformat(),
+            "steps": r.steps,
+            "distance_m": r.distance_m,
+            "calories": r.calories,
+            "floors": r.floors,
+            "sleep_minutes": r.sleep_minutes,
+            "point_count": r.point_count,
+            "metrics": r.metrics,
+        }
+        for r in rows
+    ]
 
 
 @router.get("/studies/{study_id}/subjects", response_model=list[SubjectStatusOut])
