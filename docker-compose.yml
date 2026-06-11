@@ -53,5 +53,14 @@ services:
       db:
         condition: service_healthy
 
+  frontend:
+    # Researcher console (Vite/React) served by nginx, which also reverse-proxies /admin and
+    # /enroll to the backend (same-origin, no CORS). Access at http://<host>:8020.
+    build: ./frontend
+    ports:
+      - "8020:80"
+    depends_on:
+      - backend
+
 volumes:
   db_data:

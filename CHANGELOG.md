@@ -36,6 +36,12 @@ schema; tokens encrypted at rest. Researcher auth/RBAC and Garmin are deferred.
   data points landed and linked for the test subject.
 - **Minimal admin API** — create study, create subject (auto entry code), list subjects +
   registration status. Unprotected for Milestone 1 (auth deferred).
+- **Researcher console (Vite/React)** — `frontend/`: create/list studies, add subjects (shows
+  entry codes + linked status), view a subject's consolidated `daily_health` (steps/distance/
+  calories/floors/sleep/points), pull+consolidate a date range, and revoke a subject. Served by
+  nginx (`frontend` compose service, host `:8020`) which also reverse-proxies `/admin`,
+  `/enroll`, `/webhooks` to the backend — same-origin, no CORS, no backend changes. The subject
+  enrollment flow stays the server-rendered `/enroll` (OAuth-coupled), linked from the console.
 - **Daily consolidation** — one row per subject per **local** day in `daily_health` (hybrid:
   typed `steps`/`distance_m`/`calories`/`floors`/`sleep_minutes` columns + a JSON `metrics`
   blob). Since webhooks carry no values, each touched subject-day is *pulled* from Google and
@@ -92,8 +98,8 @@ schema; tokens encrypted at rest. Researcher auth/RBAC and Garmin are deferred.
 
 ### Not yet done (remaining Milestone 1)
 
-- **Frontend (Vite)** — enroll page + minimal researcher page are still server-rendered
-  placeholders; not scaffolded as React.
+- **Subject enroll page as React** — the researcher console is React, but the subject-facing
+  `/enroll` flow is still server-rendered HTML (it's OAuth-redirect-coupled and works as-is).
 - **Inbound deregistration shape** — the deregistration-webhook handler is best-effort; the
   real Google payload is undocumented/unobserved. Confirm and tighten once one is captured.
 - **Consolidation follow-ups** — deep *historical* sleep/height backfill is bounded (those
