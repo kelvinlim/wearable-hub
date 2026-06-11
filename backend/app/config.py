@@ -35,6 +35,16 @@ class Settings(BaseSettings):
     # AUTOMATIC = Google auto-creates per-user subscriptions on consent; MANUAL = we create them.
     gh_subscription_create_policy: str = "AUTOMATIC"
 
+    # --- Researcher auth (Google login + RBAC) ---
+    # Reuses GOOGLE_CLIENT_ID/SECRET. The researcher login callback (add this exact URI to the
+    # Cloud Console OAuth client's authorized redirect URIs).
+    researcher_oauth_redirect_uri: str = "http://localhost:8020/auth/callback"
+    researcher_google_scopes: str = "openid email profile"
+    # Bootstrap superadmins: these emails are auto-provisioned as superusers on first login.
+    superadmin_emails: str = ""  # comma-separated
+    # Signed+encrypted session cookie (Fernet, reuses FERNET_KEY) lifetime.
+    session_ttl_seconds: int = 60 * 60 * 12  # 12h
+
     # --- Daily consolidation scheduler (the `scheduler` compose service) ---
     # Nightly safety-net: re-mark recent days dirty + drain, at this hour (container TZ, UTC).
     consolidation_nightly_hour: int = 4

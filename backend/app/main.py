@@ -5,12 +5,13 @@ from sqlalchemy import text
 
 from app.config import get_settings
 from app.db import engine
-from app.routers import admin, enroll, webhooks
+from app.routers import admin, auth, enroll, webhooks
 
 settings = get_settings()
 
 app = FastAPI(title=settings.app_name)
 
+app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(enroll.router)
 app.include_router(webhooks.router)

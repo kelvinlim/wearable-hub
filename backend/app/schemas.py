@@ -42,3 +42,32 @@ class SubjectStatusOut(SubjectOut):
     """Subject plus registration status of its Fitbit/Google-Health account."""
 
     registered: bool = False
+
+
+# --- Admin: researchers (users) + study membership ------------------------------
+
+class UserCreate(BaseModel):
+    email: str
+    name: str | None = None
+    is_superuser: bool = False
+
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    email: str
+    name: str | None
+    is_superuser: bool
+
+
+class MemberCreate(BaseModel):
+    email: str
+    role: str = "member"  # 'admin' | 'member'
+
+
+class MemberOut(BaseModel):
+    user_id: int
+    email: str
+    name: str | None
+    role: str

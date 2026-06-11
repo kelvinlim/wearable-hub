@@ -43,6 +43,22 @@ class User(Base):
     studies: Mapped[list["Study"]] = relationship(back_populates="created_by")
 
 
+class StudyMembership(Base):
+    """Researcher ↔ study access. `role`: 'admin' (manage the study's subjects + members) or
+    'member' (read-only). Superusers (`users.is_superuser`) bypass memberships entirely."""
+
+    __tablename__ = "study_memberships"
+    __table_args__ = (
+        UniqueConstraint("user_id", "study_id", name="uq_membership_user_study"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    study_id: Mapped[int] = mapped_column(ForeignKey("studies.id"), nullable=False, index=True)
+    role: Mapped[str] = mapped_column(String(16), default="member", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class Study(Base):
     __tablename__ = "studies"
 

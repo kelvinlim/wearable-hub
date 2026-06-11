@@ -36,6 +36,19 @@ schema; tokens encrypted at rest. Researcher auth/RBAC and Garmin are deferred.
   data points landed and linked for the test subject.
 - **Minimal admin API** — create study, create subject (auto entry code), list subjects +
   registration status. Unprotected for Milestone 1 (auth deferred).
+- **Researcher auth + RBAC** — Google sign-in (reuses the project's OAuth client; id_token
+  verified via google-auth) establishes a Fernet-signed session cookie. Allowlist = the `users`
+  table; `SUPERADMIN_EMAILS` bootstraps superadmin(s) on first login. Access model: superusers
+  do anything; other researchers are scoped to studies they have a `study_memberships` row for
+  ('admin' manages the study's subjects + members, 'member' is read-only). Every `/admin` route
+  is gated; project-level ops (subscriber/sync/run-due) are superuser-only; `/enroll` +
+  `/webhooks` stay public. Endpoints: `/auth/{login,callback,logout,me}`, `/admin/users`,
+  `/admin/studies/{id}/members`. Verified headlessly (401 gating, superuser vs scoped access,
+  member→admin escalation, cross-study 403, bootstrap provisioning). The console now gates its UI
+  by role (create-study = superuser; add-subject/consolidate/revoke = study admin; researcher +
+  member management panels). **Setup needed:** add `RESEARCHER_OAUTH_REDIRECT_URI` to the Google
+  client's authorized redirect URIs + set `SUPERADMIN_EMAILS`; the live browser login is then
+  end-to-end.
 - **Researcher console (Vite/React)** — `frontend/`: create/list studies, add subjects (shows
   entry codes + linked status), view a subject's consolidated `daily_health` (steps/distance/
   calories/floors/sleep/points), pull+consolidate a date range, and revoke a subject. Served by
@@ -113,6 +126,5 @@ schema; tokens encrypted at rest. Researcher auth/RBAC and Garmin are deferred.
 
 ### Deferred (later milestones)
 
-- Researcher Google-login auth + RBAC (`roles`, `study_memberships`).
 - Garmin provider (OAuth 1.0a + push webhooks).
-- Data review + download UI.
+- Data review + download UI (CSV/JSON export of `daily_health`).

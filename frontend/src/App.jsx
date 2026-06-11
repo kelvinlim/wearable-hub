@@ -4,11 +4,49 @@ import { api } from "./api.js";
 const today = () => new Date().toISOString().slice(0, 10);
 
 export default function App() {
+  const [me, setMe] = useState(undefined); // undefined = loading, null = logged out
+
+  useEffect(() => {
+    api
+      .me()
+      .then(setMe)
+      .catch(() => setMe(null));
+  }, []);
+
+  if (me === undefined) return <div className="app muted">Loading…</div>;
+  if (me === null) return <Login />;
+  return <Console me={me} onLogout={() => setMe(null)} />;
+}
+
+function Login() {
+  return (
+    <div className="login">
+      <div className="login-card">
+        <h1>Wearable Hub</h1>
+        <p className="muted">Researcher console</p>
+        <a className="btn-link" href="/auth/login">
+          Sign in with Google
+        </a>
+      </div>
+    </div>
+  );
+}
+
+function Console({ me, onLogout }) {
   const [studies, setStudies] = useState([]);
   const [studyId, setStudyId] = useState(null);
   const [subjects, setSubjects] = useState([]);
-  const [subject, setSubject] = useState(null); // selected subject object
+  const [subject, setSubject] = useState(null);
   const [error, setError] = useState(null);
+
+  const roleFor = useCallback(
+    (id) =>
+      me.is_superuser
+        ? "super"
+        : me.memberships.find((m) => m.study_id === id)?.role ?? null,
+    [me]
+  );
+  const canAdmin = (id) => ["super", "admin"].includes(roleFor(id));
 
   const guard = useCallback(async (fn) => {
     try {
@@ -41,49 +79,73 @@ export default function App() {
       <header>
         <h1>Wearable Hub</h1>
         <span className="muted">Researcher console</span>
+        <span className="spacer" />
+        <span className="muted">
+          {me.email}
+          {me.is_superuser ? <span className="badge ok"> superuser</span> : null}
+        </span>
         <a className="enroll-link" href="/enroll" target="_blank" rel="noreferrer">
-          Open enrollment page ↗
+          Enrollment ↗
         </a>
+        <button
+          className="ghost"
+          onClick={() =>
+            guard(async () => {
+              await api.logout();
+              onLogout();
+            })
+          }
+        >
+          Sign out
+        </button>
       </header>
 
       {error && <div className="error">{error}</div>}
 
       <div className="cols">
-        <StudiesPanel
-          studies={studies}
-          studyId={studyId}
-          onSelect={setStudyId}
-          onCreate={(body) =>
-            guard(async () => {
-              await api.createStudy(body);
-              loadStudies();
-            })
-          }
-        />
+        <div className="side">
+          <StudiesPanel
+            studies={studies}
+            studyId={studyId}
+            canCreate={me.is_superuser}
+            onSelect={setStudyId}
+            onCreate={(body) =>
+              guard(async () => {
+                await api.createStudy(body);
+                loadStudies();
+              })
+            }
+          />
+          {me.is_superuser && <UsersPanel guard={guard} />}
+        </div>
 
         <div className="main">
           {studyId == null ? (
-            <p className="muted">Select or create a study to manage its subjects.</p>
+            <p className="muted">Select or create a study.</p>
           ) : (
-            <SubjectsPanel
-              subjects={subjects}
-              selected={subject}
-              onSelectSubject={setSubject}
-              onAdd={(body) =>
-                guard(async () => {
-                  await api.createSubject(studyId, body);
-                  loadSubjects(studyId);
-                })
-              }
-            />
-          )}
-
-          {subject && (
-            <SubjectDetail
-              subject={subject}
-              guard={guard}
-              onChanged={() => loadSubjects(studyId)}
-            />
+            <>
+              <SubjectsPanel
+                subjects={subjects}
+                selected={subject}
+                canAdmin={canAdmin(studyId)}
+                onSelectSubject={setSubject}
+                onAdd={(body) =>
+                  guard(async () => {
+                    await api.createSubject(studyId, body);
+                    loadSubjects(studyId);
+                  })
+                }
+              />
+              {subject && (
+                <SubjectDetail
+                  subject={subject}
+                  canAdmin={canAdmin(studyId)}
+                  guard={guard}
+                  onChanged={() => loadSubjects(studyId)}
+                />
+              )}
+              {canAdmin(studyId) && <MembersPanel studyId={studyId} guard={guard} />}
+            </>
           )}
         </div>
       </div>
@@ -91,7 +153,7 @@ export default function App() {
   );
 }
 
-function StudiesPanel({ studies, studyId, onSelect, onCreate }) {
+function StudiesPanel({ studies, studyId, canCreate, onSelect, onCreate }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   return (
@@ -99,40 +161,34 @@ function StudiesPanel({ studies, studyId, onSelect, onCreate }) {
       <h2>Studies</h2>
       <ul className="list">
         {studies.map((s) => (
-          <li
-            key={s.id}
-            className={s.id === studyId ? "active" : ""}
-            onClick={() => onSelect(s.id)}
-          >
+          <li key={s.id} className={s.id === studyId ? "active" : ""} onClick={() => onSelect(s.id)}>
             {s.name}
             {s.description ? <span className="muted"> — {s.description}</span> : null}
           </li>
         ))}
-        {studies.length === 0 && <li className="muted">No studies yet.</li>}
+        {studies.length === 0 && <li className="muted">No studies.</li>}
       </ul>
-      <form
-        className="form"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (!name.trim()) return;
-          onCreate({ name: name.trim(), description: description.trim() || null });
-          setName("");
-          setDescription("");
-        }}
-      >
-        <input placeholder="New study name" value={name} onChange={(e) => setName(e.target.value)} />
-        <input
-          placeholder="Description (optional)"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-        />
-        <button type="submit">Create study</button>
-      </form>
+      {canCreate && (
+        <form
+          className="form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (!name.trim()) return;
+            onCreate({ name: name.trim(), description: description.trim() || null });
+            setName("");
+            setDescription("");
+          }}
+        >
+          <input placeholder="New study name" value={name} onChange={(e) => setName(e.target.value)} />
+          <input placeholder="Description (optional)" value={description} onChange={(e) => setDescription(e.target.value)} />
+          <button type="submit">Create study</button>
+        </form>
+      )}
     </aside>
   );
 }
 
-function SubjectsPanel({ subjects, selected, onSelectSubject, onAdd }) {
+function SubjectsPanel({ subjects, selected, canAdmin, onSelectSubject, onAdd }) {
   const [label, setLabel] = useState("");
   return (
     <section className="panel">
@@ -148,53 +204,42 @@ function SubjectsPanel({ subjects, selected, onSelectSubject, onAdd }) {
         </thead>
         <tbody>
           {subjects.map((s) => (
-            <tr
-              key={s.id}
-              className={selected?.id === s.id ? "active" : ""}
-              onClick={() => onSelectSubject(s)}
-            >
+            <tr key={s.id} className={selected?.id === s.id ? "active" : ""} onClick={() => onSelectSubject(s)}>
               <td>{s.subject_label || <span className="muted">—</span>}</td>
-              <td>
-                <code>{s.entry_code}</code>
-              </td>
+              <td><code>{s.entry_code}</code></td>
               <td>{s.status}</td>
               <td>{s.registered ? <span className="badge ok">linked</span> : <span className="badge">no</span>}</td>
             </tr>
           ))}
           {subjects.length === 0 && (
-            <tr>
-              <td colSpan={4} className="muted">
-                No subjects yet.
-              </td>
-            </tr>
+            <tr><td colSpan={4} className="muted">No subjects yet.</td></tr>
           )}
         </tbody>
       </table>
-      <form
-        className="form row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          onAdd({ subject_label: label.trim() || null });
-          setLabel("");
-        }}
-      >
-        <input placeholder="Subject label (optional)" value={label} onChange={(e) => setLabel(e.target.value)} />
-        <button type="submit">Add subject (generates entry code)</button>
-      </form>
+      {canAdmin && (
+        <form
+          className="form row"
+          onSubmit={(e) => {
+            e.preventDefault();
+            onAdd({ subject_label: label.trim() || null });
+            setLabel("");
+          }}
+        >
+          <input placeholder="Subject label (optional)" value={label} onChange={(e) => setLabel(e.target.value)} />
+          <button type="submit">Add subject (generates entry code)</button>
+        </form>
+      )}
     </section>
   );
 }
 
-function SubjectDetail({ subject, guard, onChanged }) {
+function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
   const [daily, setDaily] = useState([]);
   const [start, setStart] = useState(today());
   const [end, setEnd] = useState(today());
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(
-    () => guard(async () => setDaily(await api.daily(subject.id))),
-    [guard, subject.id]
-  );
+  const load = useCallback(() => guard(async () => setDaily(await api.daily(subject.id))), [guard, subject.id]);
   useEffect(() => {
     load();
   }, [load]);
@@ -206,53 +251,45 @@ function SubjectDetail({ subject, guard, onChanged }) {
         {subject.registered ? <span className="badge ok">linked</span> : <span className="badge">not linked</span>}
       </h2>
 
-      <div className="actions">
-        <label>
-          From <input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
-        </label>
-        <label>
-          To <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} />
-        </label>
-        <button
-          disabled={busy}
-          onClick={() =>
-            guard(async () => {
-              setBusy(true);
-              try {
-                await api.consolidate(subject.id, start, end);
-                await load();
-              } finally {
-                setBusy(false);
-              }
-            })
-          }
-        >
-          {busy ? "Pulling…" : "Pull + consolidate"}
-        </button>
-        <button
-          className="danger"
-          onClick={() => {
-            if (!confirm("Revoke this subject's wearable authorization?")) return;
-            guard(async () => {
-              await api.revoke(subject.id);
-              onChanged();
-            });
-          }}
-        >
-          Revoke access
-        </button>
-      </div>
+      {canAdmin && (
+        <div className="actions">
+          <label>From <input type="date" value={start} onChange={(e) => setStart(e.target.value)} /></label>
+          <label>To <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} /></label>
+          <button
+            disabled={busy}
+            onClick={() =>
+              guard(async () => {
+                setBusy(true);
+                try {
+                  await api.consolidate(subject.id, start, end);
+                  await load();
+                } finally {
+                  setBusy(false);
+                }
+              })
+            }
+          >
+            {busy ? "Pulling…" : "Pull + consolidate"}
+          </button>
+          <button
+            className="danger"
+            onClick={() => {
+              if (!confirm("Revoke this subject's wearable authorization?")) return;
+              guard(async () => {
+                await api.revoke(subject.id);
+                onChanged();
+              });
+            }}
+          >
+            Revoke access
+          </button>
+        </div>
+      )}
 
       <table className="table">
         <thead>
           <tr>
-            <th>Date</th>
-            <th>Steps</th>
-            <th>Distance (m)</th>
-            <th>Calories</th>
-            <th>Floors</th>
-            <th>Sleep (min)</th>
-            <th>Points</th>
+            <th>Date</th><th>Steps</th><th>Distance (m)</th><th>Calories</th><th>Floors</th><th>Sleep (min)</th><th>Points</th>
           </tr>
         </thead>
         <tbody>
@@ -268,15 +305,118 @@ function SubjectDetail({ subject, guard, onChanged }) {
             </tr>
           ))}
           {daily.length === 0 && (
-            <tr>
-              <td colSpan={7} className="muted">
-                No consolidated days yet — pull a date range above.
-              </td>
-            </tr>
+            <tr><td colSpan={7} className="muted">No consolidated days yet.</td></tr>
           )}
         </tbody>
       </table>
     </section>
+  );
+}
+
+function MembersPanel({ studyId, guard }) {
+  const [members, setMembers] = useState([]);
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState("member");
+
+  const load = useCallback(
+    () => guard(async () => setMembers(await api.listMembers(studyId))),
+    [guard, studyId]
+  );
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return (
+    <section className="panel">
+      <h2>Study members</h2>
+      <table className="table">
+        <thead><tr><th>Email</th><th>Role</th><th></th></tr></thead>
+        <tbody>
+          {members.map((m) => (
+            <tr key={m.user_id}>
+              <td>{m.email}</td>
+              <td>{m.role}</td>
+              <td>
+                <button className="ghost small" onClick={() => guard(async () => { await api.removeMember(studyId, m.user_id); load(); })}>
+                  remove
+                </button>
+              </td>
+            </tr>
+          ))}
+          {members.length === 0 && <tr><td colSpan={3} className="muted">No members.</td></tr>}
+        </tbody>
+      </table>
+      <form
+        className="form row"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!email.trim()) return;
+          guard(async () => {
+            await api.addMember(studyId, { email: email.trim(), role });
+            setEmail("");
+            load();
+          });
+        }}
+      >
+        <input placeholder="researcher@email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        <select value={role} onChange={(e) => setRole(e.target.value)}>
+          <option value="member">member</option>
+          <option value="admin">admin</option>
+        </select>
+        <button type="submit">Add / update member</button>
+      </form>
+      <p className="muted small">Researchers must first be added under "Researchers" by a superuser.</p>
+    </section>
+  );
+}
+
+function UsersPanel({ guard }) {
+  const [users, setUsers] = useState([]);
+  const [email, setEmail] = useState("");
+  const [isSuper, setIsSuper] = useState(false);
+  const [open, setOpen] = useState(false);
+
+  const load = useCallback(() => guard(async () => setUsers(await api.listUsers())), [guard]);
+  useEffect(() => {
+    if (open) load();
+  }, [open, load]);
+
+  return (
+    <aside className="panel">
+      <h2 className="clickable" onClick={() => setOpen((o) => !o)}>
+        Researchers {open ? "▾" : "▸"}
+      </h2>
+      {open && (
+        <>
+          <ul className="list">
+            {users.map((u) => (
+              <li key={u.id}>
+                {u.email} {u.is_superuser ? <span className="badge ok">super</span> : null}
+                <button className="ghost small" onClick={() => guard(async () => { await api.deleteUser(u.id); load(); })}>×</button>
+              </li>
+            ))}
+            {users.length === 0 && <li className="muted">No researchers.</li>}
+          </ul>
+          <form
+            className="form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!email.trim()) return;
+              guard(async () => {
+                await api.createUser({ email: email.trim(), is_superuser: isSuper });
+                setEmail("");
+                setIsSuper(false);
+                load();
+              });
+            }}
+          >
+            <input placeholder="researcher@email" value={email} onChange={(e) => setEmail(e.target.value)} />
+            <label className="small"><input type="checkbox" checked={isSuper} onChange={(e) => setIsSuper(e.target.checked)} /> superuser</label>
+            <button type="submit">Add researcher</button>
+          </form>
+        </>
+      )}
+    </aside>
   );
 }
 

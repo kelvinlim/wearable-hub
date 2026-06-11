@@ -1,7 +1,8 @@
-"""Minimal researcher/admin API: create studies, create subjects (entry codes), list status.
+"""Researcher/admin API: studies, subjects, consolidation, project ops, user/member mgmt.
 
-UNPROTECTED for Milestone 1. TODO(auth-milestone): gate every route behind Google-login
-+ RBAC; scope listings to studies the researcher can access.
+Every route requires a researcher session (`get_current_user`). Access model: superusers do
+anything; other researchers are scoped to studies they're a member of ('admin' manages the
+study's subjects + members, 'member' is read-only). Project-level ops are superuser-only.
 """
 
 import secrets
@@ -22,16 +23,29 @@ from app.models import (
     ProjectSubscriber,
     ProviderAccount,
     Study,
+    StudyMembership,
     Subject,
     Subscription,
+    User,
 )
 from app.providers import fitbit_gh
 from app.schemas import (
+    MemberCreate,
+    MemberOut,
     StudyCreate,
     StudyOut,
     SubjectCreate,
     SubjectOut,
     SubjectStatusOut,
+    UserCreate,
+    UserOut,
+)
+from app.security import (
+    assert_study_admin,
+    assert_study_view,
+    get_current_user,
+    require_superuser,
+    study_id_for_subject,
 )
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -50,8 +64,10 @@ def _generate_entry_code(db: Session) -> str:
 
 
 @router.post("/studies", response_model=StudyOut, status_code=201)
-def create_study(payload: StudyCreate, db: Session = Depends(get_db)) -> Study:
-    study = Study(name=payload.name, description=payload.description)
+def create_study(
+    payload: StudyCreate, db: Session = Depends(get_db), user: User = Depends(require_superuser)
+) -> Study:
+    study = Study(name=payload.name, description=payload.description, created_by_user_id=user.id)
     db.add(study)
     db.commit()
     db.refresh(study)
@@ -59,16 +75,29 @@ def create_study(payload: StudyCreate, db: Session = Depends(get_db)) -> Study:
 
 
 @router.get("/studies", response_model=list[StudyOut])
-def list_studies(db: Session = Depends(get_db)) -> list[Study]:
-    return list(db.scalars(select(Study).order_by(Study.id)))
+def list_studies(
+    db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> list[Study]:
+    if user.is_superuser:
+        return list(db.scalars(select(Study).order_by(Study.id)))
+    study_ids = list(
+        db.scalars(select(StudyMembership.study_id).where(StudyMembership.user_id == user.id))
+    )
+    if not study_ids:
+        return []
+    return list(db.scalars(select(Study).where(Study.id.in_(study_ids)).order_by(Study.id)))
 
 
 @router.post("/studies/{study_id}/subjects", response_model=SubjectOut, status_code=201)
 def create_subject(
-    study_id: int, payload: SubjectCreate, db: Session = Depends(get_db)
+    study_id: int,
+    payload: SubjectCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> Subject:
     if db.get(Study, study_id) is None:
         raise HTTPException(status_code=404, detail="Study not found")
+    assert_study_admin(db, user, study_id)
     subject = Subject(
         study_id=study_id,
         subject_label=payload.subject_label,
@@ -82,7 +111,9 @@ def create_subject(
 
 
 @router.post("/subscriber", status_code=201)
-def ensure_project_subscriber(db: Session = Depends(get_db)) -> dict:
+def ensure_project_subscriber(
+    db: Session = Depends(get_db), _: User = Depends(require_superuser)
+) -> dict:
     """Tier-1 (one-time): register the project's webhook subscriber with project credentials.
 
     Idempotent at the app level — upserts the `project_subscribers` row. Run once after the
@@ -134,7 +165,9 @@ def ensure_project_subscriber(db: Session = Depends(get_db)) -> dict:
 
 
 @router.get("/subscriber")
-def get_project_subscriber(db: Session = Depends(get_db)) -> dict:
+def get_project_subscriber(
+    db: Session = Depends(get_db), _: User = Depends(require_superuser)
+) -> dict:
     """Show the registered project subscriber, if any."""
     settings = get_settings()
     row = db.scalar(
@@ -153,7 +186,9 @@ def get_project_subscriber(db: Session = Depends(get_db)) -> dict:
 
 @router.post("/subscriptions/sync")
 def sync_subscriptions(
-    subject_id: int | None = None, db: Session = Depends(get_db)
+    subject_id: int | None = None,
+    db: Session = Depends(get_db),
+    _: User = Depends(require_superuser),
 ) -> dict:
     """Reconcile per-user (Tier-2) subscriptions from Google into the local DB.
 
@@ -271,21 +306,14 @@ def sync_subscriptions(
 
 
 @router.post("/subjects/{subject_id}/revoke")
-def revoke_subject(subject_id: int, db: Session = Depends(get_db)) -> dict:
+def revoke_subject(
+    subject_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> dict:
     """Revoke a subject's wearable authorization: revoke the grant at Google, then mark the
-    account unregistered and drop its tokens. Idempotent — safe to call on an already-revoked
-    subject. UNPROTECTED for Milestone 1 (TODO(auth-milestone): gate + audit who revoked)."""
-    if db.get(Subject, subject_id) is None:
-        raise HTTPException(status_code=404, detail="Subject not found")
-    acct = db.scalar(
-        select(ProviderAccount).where(
-            ProviderAccount.subject_id == subject_id,
-            ProviderAccount.provider == fitbit_gh.NAME,
-        )
-    )
-    if acct is None:
-        raise HTTPException(status_code=404, detail="No fitbit account for that subject")
-
+    account unregistered and drop its tokens. Idempotent. Requires study-admin on the
+    subject's study."""
+    assert_study_admin(db, user, study_id_for_subject(db, subject_id))
+    acct = _fitbit_account(db, subject_id)
     was_registered = acct.registered
     revoked_at_google = revoke_account(db, acct)
     db.commit()
@@ -314,14 +342,19 @@ def _fitbit_account(db: Session, subject_id: int) -> ProviderAccount:
 
 @router.post("/subjects/{subject_id}/consolidate")
 def consolidate_subject(
-    subject_id: int, start: date, end: date, db: Session = Depends(get_db)
+    subject_id: int,
+    start: date,
+    end: date,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> dict:
     """On-demand: (re)build daily_health for a subject over [start, end] by pulling from Google.
-    Used for backfilling history and verification. Idempotent per day."""
+    Used for backfilling history and verification. Idempotent per day. Requires study-admin."""
     if end < start:
         raise HTTPException(status_code=400, detail="end must be >= start")
     if (end - start).days > 120:
         raise HTTPException(status_code=400, detail="range too large (max 120 days)")
+    assert_study_admin(db, user, study_id_for_subject(db, subject_id))
     acct = _fitbit_account(db, subject_id)
     days = []
     d = start
@@ -333,15 +366,19 @@ def consolidate_subject(
 
 
 @router.post("/consolidate/run-due")
-def consolidate_run_due(limit: int = 50, db: Session = Depends(get_db)) -> dict:
+def consolidate_run_due(
+    limit: int = 50, db: Session = Depends(get_db), _: User = Depends(require_superuser)
+) -> dict:
     """Drain pending consolidation_state rows (the durable dirty-day queue). What cron calls."""
     return consolidation.consolidate_due(db, limit=limit)
 
 
 @router.get("/subjects/{subject_id}/daily")
-def list_daily(subject_id: int, db: Session = Depends(get_db)) -> list[dict]:
-    """List a subject's consolidated daily rows (most recent first)."""
-    _fitbit_account(db, subject_id)
+def list_daily(
+    subject_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> list[dict]:
+    """List a subject's consolidated daily rows (most recent first). Requires study view."""
+    assert_study_view(db, user, study_id_for_subject(db, subject_id))
     rows = db.scalars(
         select(DailyHealth)
         .where(DailyHealth.subject_id == subject_id)
@@ -363,9 +400,12 @@ def list_daily(subject_id: int, db: Session = Depends(get_db)) -> list[dict]:
 
 
 @router.get("/studies/{study_id}/subjects", response_model=list[SubjectStatusOut])
-def list_subjects(study_id: int, db: Session = Depends(get_db)) -> list[SubjectStatusOut]:
+def list_subjects(
+    study_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> list[SubjectStatusOut]:
     if db.get(Study, study_id) is None:
         raise HTTPException(status_code=404, detail="Study not found")
+    assert_study_view(db, user, study_id)
     subjects = db.scalars(
         select(Subject).where(Subject.study_id == study_id).order_by(Subject.id)
     )
@@ -381,3 +421,111 @@ def list_subjects(study_id: int, db: Session = Depends(get_db)) -> list[SubjectS
         item.registered = bool(acct and acct.registered)
         out.append(item)
     return out
+
+
+# --- Researcher (user) management — superuser only ------------------------------
+
+@router.get("/users", response_model=list[UserOut])
+def list_users(db: Session = Depends(get_db), _: User = Depends(require_superuser)) -> list[User]:
+    return list(db.scalars(select(User).order_by(User.id)))
+
+
+@router.post("/users", response_model=UserOut, status_code=201)
+def create_user(
+    payload: UserCreate, db: Session = Depends(get_db), _: User = Depends(require_superuser)
+) -> User:
+    """Allowlist a researcher by email (they can then sign in with that Google account)."""
+    email = payload.email.strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="email required")
+    if db.scalar(select(User).where(User.email == email)):
+        raise HTTPException(status_code=409, detail="user already exists")
+    user = User(email=email, name=payload.name, is_superuser=payload.is_superuser)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.delete("/users/{user_id}", status_code=204)
+def delete_user(
+    user_id: int, db: Session = Depends(get_db), me: User = Depends(require_superuser)
+) -> None:
+    if user_id == me.id:
+        raise HTTPException(status_code=400, detail="cannot delete yourself")
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    for m in db.scalars(select(StudyMembership).where(StudyMembership.user_id == user_id)):
+        db.delete(m)
+    db.delete(user)
+    db.commit()
+
+
+# --- Study membership — study admins (or superuser) -----------------------------
+
+@router.get("/studies/{study_id}/members", response_model=list[MemberOut])
+def list_members(
+    study_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> list[MemberOut]:
+    if db.get(Study, study_id) is None:
+        raise HTTPException(status_code=404, detail="Study not found")
+    assert_study_admin(db, user, study_id)
+    rows = db.execute(
+        select(User, StudyMembership.role)
+        .join(StudyMembership, StudyMembership.user_id == User.id)
+        .where(StudyMembership.study_id == study_id)
+        .order_by(User.id)
+    )
+    return [MemberOut(user_id=u.id, email=u.email, name=u.name, role=role) for u, role in rows]
+
+
+@router.post("/studies/{study_id}/members", response_model=MemberOut, status_code=201)
+def add_member(
+    study_id: int,
+    payload: MemberCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> MemberOut:
+    if db.get(Study, study_id) is None:
+        raise HTTPException(status_code=404, detail="Study not found")
+    assert_study_admin(db, user, study_id)
+    if payload.role not in ("admin", "member"):
+        raise HTTPException(status_code=400, detail="role must be 'admin' or 'member'")
+    target = db.scalar(select(User).where(User.email == payload.email.strip().lower()))
+    if target is None:
+        raise HTTPException(
+            status_code=404, detail="No such researcher — add them via POST /admin/users first"
+        )
+    m = db.scalar(
+        select(StudyMembership).where(
+            StudyMembership.user_id == target.id, StudyMembership.study_id == study_id
+        )
+    )
+    if m is None:
+        m = StudyMembership(user_id=target.id, study_id=study_id, role=payload.role)
+        db.add(m)
+    else:
+        m.role = payload.role
+    db.commit()
+    return MemberOut(user_id=target.id, email=target.email, name=target.name, role=payload.role)
+
+
+@router.delete("/studies/{study_id}/members/{user_id}", status_code=204)
+def remove_member(
+    study_id: int,
+    user_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> None:
+    if db.get(Study, study_id) is None:
+        raise HTTPException(status_code=404, detail="Study not found")
+    assert_study_admin(db, user, study_id)
+    m = db.scalar(
+        select(StudyMembership).where(
+            StudyMembership.user_id == user_id, StudyMembership.study_id == study_id
+        )
+    )
+    if m:
+        db.delete(m)
+        db.commit()

@@ -61,3 +61,22 @@ code { background: #eef1f6; padding: 0.05rem 0.35rem; border-radius: 4px; font-s
 .badge.ok { background: #e3f6ea; color: #167a3c; }
 .actions { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
 .actions label { font-size: 0.85rem; color: var(--muted); }
+
+.spacer { flex: 1; }
+.side { display: flex; flex-direction: column; gap: 1rem; }
+button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--border); }
+button.ghost.small, .ghost.small { padding: 0.1rem 0.4rem; font-size: 0.75rem; margin-left: 0.4rem; }
+.small { font-size: 0.8rem; }
+.clickable { cursor: pointer; user-select: none; }
+select { padding: 0.45rem; border: 1px solid var(--border); border-radius: 6px; font-size: 0.9rem; }
+
+.login { min-height: 100vh; display: grid; place-items: center; background: var(--bg); }
+.login-card {
+  background: #fff; border: 1px solid var(--border); border-radius: 12px;
+  padding: 2.5rem 3rem; text-align: center; box-shadow: 0 6px 24px rgba(0,0,0,0.05);
+}
+.login-card h1 { margin: 0 0 0.25rem; }
+.btn-link {
+  display: inline-block; margin-top: 1.25rem; padding: 0.6rem 1.2rem;
+  background: var(--accent); color: #fff; border-radius: 8px; text-decoration: none; font-weight: 600;
+}

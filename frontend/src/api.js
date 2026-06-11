@@ -20,6 +20,9 @@ async function req(path, opts = {}) {
 }
 
 export const api = {
+  me: () => req("/auth/me"),
+  logout: () => req("/auth/logout", { method: "POST" }),
+
   listStudies: () => req("/admin/studies"),
   createStudy: (body) =>
     req("/admin/studies", { method: "POST", body: JSON.stringify(body) }),
@@ -36,4 +39,18 @@ export const api = {
     }),
   revoke: (subjectId) =>
     req(`/admin/subjects/${subjectId}/revoke`, { method: "POST" }),
+
+  // RBAC management
+  listUsers: () => req("/admin/users"),
+  createUser: (body) =>
+    req("/admin/users", { method: "POST", body: JSON.stringify(body) }),
+  deleteUser: (userId) => req(`/admin/users/${userId}`, { method: "DELETE" }),
+  listMembers: (studyId) => req(`/admin/studies/${studyId}/members`),
+  addMember: (studyId, body) =>
+    req(`/admin/studies/${studyId}/members`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  removeMember: (studyId, userId) =>
+    req(`/admin/studies/${studyId}/members/${userId}`, { method: "DELETE" }),
 };
