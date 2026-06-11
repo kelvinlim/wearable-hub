@@ -145,6 +145,37 @@ when `token_expires_at` is near; updates stored tokens. Reused before any data r
 > unverified against Google's docs — flagged TODO in code (current code assumes project
 > credentials for both, with the user identified by `provider_user_id` in the body).
 
+> **Finding (2026-06-11) — Tier-1 subscriber registration now works end-to-end.** ✅
+> Service-account key `secrets/health-sa.json` (`health-subscriber@fitbitdata-499001`)
+> mounted read-only at `/secrets` (compose needs `:z` for SELinux on el8) and pointed at by
+> `GH_SA_CREDENTIALS_FILE`. `POST /admin/subscriber` mints an SA token and registers the
+> project subscriber; `GET /admin/subscriber` confirms it. Verified facts:
+> - **Path uses the project NUMBER** (`projects/569496656627/...`), not the ID.
+> - **`subscriberId` is a query param**; pattern `[a-z0-9-]{4,36}` (our `wearable-hub` ok).
+> - **`endpointAuthorization.secret` is the full header value** — register `"Bearer <secret>"`;
+>   the webhook compares the inbound `Authorization` header against it verbatim. Google's
+>   registration-time verification probes the endpoint twice (authorized→200, unauth→401);
+>   our `/webhooks/google-health` already satisfies both, so registration verifies cleanly.
+> - **Only a fixed set of dataTypes is webhook-subscribable** (a bad one → bare 400
+>   INVALID_ARGUMENT, no field detail). Verified subscribable: `steps, sleep, distance,
+>   calories, weight, height, floors, exercise, altitude`. **NOT subscribable** (any
+>   spelling): `heart_rate`/HRV/resting-HR, SpO2, VO2 max, active(-zone) minutes, body fat,
+>   respiratory rate — these are **pull-only** via the dataPoints read, despite appearing in
+>   the general data-types docs. `fitbit_gh.SUBSCRIBABLE_DATA_TYPES` guards config with a
+>   clear error. Registered set (user choice): all 9 subscribable types.
+> - **create can return a long-running Operation**, not the subscriber inline (async endpoint
+>   verification on a fresh register). There is **no GET-by-id route** (returns a Google HTML
+>   404) — only LIST. So `get_subscriber()` LISTs and matches the trailing id; the admin
+>   handler reconciles the DB row from that, not from the create response.
+> - **Endpoint is idempotent**: re-running treats Google's `409 ALREADY_EXISTS` as success
+>   and reconciles from the live resource.
+>
+> Still Tier-2 (per-user subscription) shapes are unverified — next up.
+>
+> **Dev loop note:** the backend image bakes source (`COPY . .`, no reload/mount), so code
+> changes need `podman-compose build backend && up -d --force-recreate backend`, and the
+> entrypoint waits on the DB + runs migrations (~5–15s) before serving.
+
 **Webhook receiver ([webhooks.py](backend/app/routers/webhooks.py), patterned on garminrec):**
 - `POST /webhooks/google-health` — the registered subscriber endpoint. Parse notification,
   insert into `health_data`, **always return 200 fast** so Google doesn't disable the

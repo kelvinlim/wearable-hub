@@ -31,6 +31,11 @@ services:
       # Host 8000 is reserved by nginx for /qualtrics_dashboard/; use 8010.
       # nginx proxies the public paths (/enroll, /webhooks) here.
       - "8010:8000"
+    volumes:
+      # Service-account key for Tier-1 subscriber registration (read-only).
+      # GH_SA_CREDENTIALS_FILE points at /secrets/health-sa.json inside the container.
+      # `z` relabels for SELinux (el8/podman) so the container can read the mount.
+      - ./secrets:/secrets:ro,z
     depends_on:
       db:
         condition: service_healthy
