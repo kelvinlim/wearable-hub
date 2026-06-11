@@ -25,9 +25,14 @@ NAME = "fitbit_gh"
 
 AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token"
+REVOKE_ENDPOINT = "https://oauth2.googleapis.com/revoke"
 HEALTH_API_BASE = "https://health.googleapis.com/v4"
 
 _HTTP_TIMEOUT = 30.0
+
+
+class GrantRevokedError(RuntimeError):
+    """The user's OAuth grant is no longer valid (revoked, or refresh returned invalid_grant)."""
 
 
 # --- PKCE / state ---------------------------------------------------------------
@@ -127,8 +132,23 @@ def refresh(refresh_token: str) -> TokenResult:
         "client_secret": s.google_client_secret,
     }
     resp = httpx.post(TOKEN_ENDPOINT, data=data, timeout=_HTTP_TIMEOUT)
+    # A revoked grant fails refresh with 400 invalid_grant — surface it as a typed signal so
+    # callers can mark the account unregistered rather than retrying a dead token.
+    if resp.status_code == 400 and "invalid_grant" in resp.text:
+        raise GrantRevokedError("refresh_token rejected (invalid_grant): grant revoked")
     resp.raise_for_status()
     return _to_result(resp.json())
+
+
+def revoke(token: str) -> None:
+    """Revoke an OAuth token (and thus its grant) at Google. Idempotent.
+
+    A token Google no longer recognizes returns 400 — treat that as already-revoked rather
+    than an error, so re-revoking is safe.
+    """
+    resp = httpx.post(REVOKE_ENDPOINT, data={"token": token}, timeout=_HTTP_TIMEOUT)
+    if resp.status_code not in (200, 400):
+        resp.raise_for_status()
 
 
 # --- Subscriptions (two-tier) ---------------------------------------------------

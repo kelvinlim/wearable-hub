@@ -36,6 +36,12 @@ schema; tokens encrypted at rest. Researcher auth/RBAC and Garmin are deferred.
   data points landed and linked for the test subject.
 - **Minimal admin API** — create study, create subject (auto entry code), list subjects +
   registration status. Unprotected for Milestone 1 (auth deferred).
+- **Revocation handling** — three converging triggers flip `provider_account.registered` and
+  drop stored tokens: (1) **outbound** `POST /admin/subjects/{id}/revoke` revokes the grant at
+  Google then marks the account revoked; (2) **reactive** — a token refresh returning
+  `invalid_grant` raises `GrantRevokedError` so read paths can mark the account revoked
+  without retrying a dead token; (3) **inbound** — a best-effort deregistration-webhook hook
+  (shape unverified; logs loudly to capture the real payload). Revocation is idempotent.
 
 ### Verified against the live Google Health API (2026-06-11)
 
@@ -76,8 +82,11 @@ schema; tokens encrypted at rest. Researcher auth/RBAC and Garmin are deferred.
 
 - **Frontend (Vite)** — enroll page + minimal researcher page are still server-rendered
   placeholders; not scaffolded as React.
-- **Revocation handling** — when a subject's grant is revoked (or Google sends a
-  deregistration notification), flip `provider_account.registered` automatically.
+- **Data-read endpoint** — no endpoint yet refreshes tokens before a pull read, so the
+  reactive `GrantRevokedError` path (built, raised by `refresh()`) has no caller wired in
+  until that lands.
+- **Inbound deregistration shape** — the deregistration-webhook handler is best-effort; the
+  real Google payload is undocumented/unobserved. Confirm and tighten once one is captured.
 - **Async processing of `health_data`** — payloads land raw; downstream normalization/
   parsing into typed tables is deferred.
 - Frontend (Vite): enroll page + minimal researcher page — not scaffolded.

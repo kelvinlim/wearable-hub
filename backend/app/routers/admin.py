@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.accounts import revoke_account
 from app.config import get_settings
 from app.db import get_db
 from app.models import ProjectSubscriber, ProviderAccount, Study, Subject, Subscription
@@ -257,6 +258,34 @@ def sync_subscriptions(
         "linked": linked,
         "unlinked_subscriptions": len(unlinked_subs),
         "unlinked_accounts": len(unlinked_accts),
+    }
+
+
+@router.post("/subjects/{subject_id}/revoke")
+def revoke_subject(subject_id: int, db: Session = Depends(get_db)) -> dict:
+    """Revoke a subject's wearable authorization: revoke the grant at Google, then mark the
+    account unregistered and drop its tokens. Idempotent — safe to call on an already-revoked
+    subject. UNPROTECTED for Milestone 1 (TODO(auth-milestone): gate + audit who revoked)."""
+    if db.get(Subject, subject_id) is None:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    acct = db.scalar(
+        select(ProviderAccount).where(
+            ProviderAccount.subject_id == subject_id,
+            ProviderAccount.provider == fitbit_gh.NAME,
+        )
+    )
+    if acct is None:
+        raise HTTPException(status_code=404, detail="No fitbit account for that subject")
+
+    was_registered = acct.registered
+    revoked_at_google = revoke_account(db, acct)
+    db.commit()
+    return {
+        "subject_id": subject_id,
+        "provider_account_id": acct.id,
+        "was_registered": was_registered,
+        "revoked_at_google": revoked_at_google,
+        "registered": acct.registered,
     }
 
 

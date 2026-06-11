@@ -25,6 +25,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.accounts import mark_revoked
 from app.config import get_settings
 from app.db import get_db
 from app.models import HealthData, ProviderAccount
@@ -132,6 +133,28 @@ async def google_health(request: Request, db: Session = Depends(get_db)) -> Resp
     if isinstance(body, dict) and body.get("type") == "verification":
         log.info("Webhook verification probe received; acking 200")
         return Response(status_code=200)
+
+    # Inbound deregistration (BEST-EFFORT — shape unverified). Google's docs don't define an
+    # account-level revocation webhook ("notifications simply stop" on consent withdrawal), so
+    # we don't know the exact payload. Real data notifications are JSON *arrays*; only a dict
+    # body carrying a deletion/deregistration signal triggers this, so it can't misfire on
+    # normal data. We log loudly to capture the real shape if one ever arrives.
+    if isinstance(body, dict):
+        ntype = str(body.get("notificationType") or "").upper()
+        if any(tok in ntype for tok in ("DELET", "DEREG", "REVOK")):
+            log.warning("Inbound deregistration-like notification (verify shape): %s", body)
+            hid = body.get("healthUserId") or body.get("userId")
+            if hid:
+                acct = db.scalar(
+                    select(ProviderAccount).where(
+                        ProviderAccount.provider == fitbit_gh.NAME,
+                        ProviderAccount.health_user_id == str(hid),
+                    )
+                )
+                if acct:
+                    mark_revoked(db, acct)
+                    db.commit()
+            return Response(status_code=200)
 
     # Notification processing — never let an error reach Google (keeps the sub alive).
     # Verified shape: the body is a JSON ARRAY of {"data": {...}} items (we also accept a lone
