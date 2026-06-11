@@ -363,7 +363,7 @@ function MembersPanel({ studyId, guard }) {
           <option value="member">member</option>
           <option value="admin">admin</option>
         </select>
-        <button type="submit">Add / update member</button>
+        <button type="submit" disabled={!email.trim()}>Add / update member</button>
       </form>
       <p className="muted small">Researchers must first be added under "Researchers" by a superuser.</p>
     </section>
@@ -412,7 +412,7 @@ function UsersPanel({ guard }) {
           >
             <input placeholder="researcher@email" value={email} onChange={(e) => setEmail(e.target.value)} />
             <label className="small"><input type="checkbox" checked={isSuper} onChange={(e) => setIsSuper(e.target.checked)} /> superuser</label>
-            <button type="submit">Add researcher</button>
+            <button type="submit" disabled={!email.trim()}>Add researcher</button>
           </form>
         </>
       )}

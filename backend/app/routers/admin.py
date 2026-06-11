@@ -439,7 +439,7 @@ def create_user(
     if not email:
         raise HTTPException(status_code=400, detail="email required")
     if db.scalar(select(User).where(User.email == email)):
-        raise HTTPException(status_code=409, detail="user already exists")
+        raise HTTPException(status_code=409, detail=f"{email} is already a researcher")
     user = User(email=email, name=payload.name, is_superuser=payload.is_superuser)
     db.add(user)
     db.commit()
