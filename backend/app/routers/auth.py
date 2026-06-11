@@ -130,8 +130,10 @@ def callback(
     if user is None:
         raise HTTPException(status_code=403, detail="This Google account is not authorized")
 
-    # Land back on the console (same origin as the callback host).
-    resp = RedirectResponse("/", status_code=303)
+    # Land back on the console root (derived from the callback URI: strip the /auth/callback
+    # suffix, leaving e.g. https://omnikog.asuscomm.com/wearable/).
+    console_base = s.researcher_oauth_redirect_uri.split("/auth/callback")[0] + "/"
+    resp = RedirectResponse(console_base, status_code=303)
     resp.set_cookie(
         COOKIE_NAME,
         make_session(user.id),

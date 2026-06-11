@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { api } from "./api.js";
+import { api, apiBase } from "./api.js";
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -24,7 +24,7 @@ function Login() {
       <div className="login-card">
         <h1>Wearable Hub</h1>
         <p className="muted">Researcher console</p>
-        <a className="btn-link" href="/auth/login">
+        <a className="btn-link" href={`${apiBase}/auth/login`}>
           Sign in with Google
         </a>
       </div>

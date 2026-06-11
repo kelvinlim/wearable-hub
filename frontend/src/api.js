@@ -1,8 +1,11 @@
-// Thin wrapper over the backend admin API. Paths are relative (same-origin): nginx proxies
-// /admin and /enroll to the backend in the container; Vite proxies them in dev.
+// Thin wrapper over the backend admin API. Calls are prefixed with the app's base path
+// (BASE_URL = "/wearable/" in prod, "/" in a plain build) so they survive the host-nginx
+// prefix strip; nginx/Vite proxy them to the backend (same-origin, no CORS).
+
+export const apiBase = (import.meta.env.BASE_URL || "/").replace(/\/$/, ""); // e.g. "/wearable"
 
 async function req(path, opts = {}) {
-  const res = await fetch(path, {
+  const res = await fetch(apiBase + path, {
     headers: { "Content-Type": "application/json" },
     ...opts,
   });

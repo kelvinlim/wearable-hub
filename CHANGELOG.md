@@ -55,6 +55,10 @@ schema; tokens encrypted at rest. Researcher auth/RBAC and Garmin are deferred.
   nginx (`frontend` compose service, host `:8020`) which also reverse-proxies `/admin`,
   `/enroll`, `/webhooks` to the backend — same-origin, no CORS, no backend changes. The subject
   enrollment flow stays the server-rendered `/enroll` (OAuth-coupled), linked from the console.
+  **Public deployment:** served at `https://omnikog.asuscomm.com/wearable/` — the SPA is built
+  with Vite `base: /wearable/` and prefixes its API calls, and the host nginx strips the prefix
+  to the frontend container (so the container is unchanged). Host nginx snippet (not in repo):
+  `location /wearable/ { proxy_pass http://127.0.0.1:8020/; }` (trailing slash strips the prefix).
 - **Daily consolidation** — one row per subject per **local** day in `daily_health` (hybrid:
   typed `steps`/`distance_m`/`calories`/`floors`/`sleep_minutes` columns + a JSON `metrics`
   blob). Since webhooks carry no values, each touched subject-day is *pulled* from Google and
