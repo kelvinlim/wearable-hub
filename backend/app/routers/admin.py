@@ -20,6 +20,7 @@ from app.config import get_settings
 from app.db import get_db
 from app.models import (
     DailyHealth,
+    HealthDataPoint,
     ProjectSubscriber,
     ProviderAccount,
     Study,
@@ -394,6 +395,41 @@ def list_daily(
             "sleep_minutes": r.sleep_minutes,
             "point_count": r.point_count,
             "metrics": r.metrics,
+        }
+        for r in rows
+    ]
+
+
+@router.get("/subjects/{subject_id}/daily/{day}/points")
+def list_day_points(
+    subject_id: int,
+    day: date,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> list[dict]:
+    """Raw intraday data points for a subject on one local day (most granular). Study view.
+
+    Note: floors/calories are rollup-only (no raw points); steps/distance/altitude/sleep/etc.
+    have intraday points. `start_time`/`end_time` are UTC; `tz_offset_seconds` gives the local
+    offset for display.
+    """
+    assert_study_view(db, user, study_id_for_subject(db, subject_id))
+    acct = _fitbit_account(db, subject_id)
+    rows = db.scalars(
+        select(HealthDataPoint)
+        .where(
+            HealthDataPoint.provider_account_id == acct.id,
+            HealthDataPoint.local_date == day,
+        )
+        .order_by(HealthDataPoint.datatype, HealthDataPoint.start_time)
+    )
+    return [
+        {
+            "datatype": r.datatype,
+            "start_time": r.start_time.isoformat() if r.start_time else None,
+            "end_time": r.end_time.isoformat() if r.end_time else None,
+            "value": r.value,
+            "tz_offset_seconds": r.tz_offset_seconds,
         }
         for r in rows
     ]

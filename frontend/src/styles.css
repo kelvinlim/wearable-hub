@@ -80,3 +80,14 @@ select { padding: 0.45rem; border: 1px solid var(--border); border-radius: 6px; 
   display: inline-block; margin-top: 1.25rem; padding: 0.6rem 1.2rem;
   background: var(--accent); color: #fff; border-radius: 8px; text-decoration: none; font-weight: 600;
 }
+
+/* Expanded intraday points */
+.detail-row > td { background: #fafbfd; padding: 0.5rem 0.75rem; }
+.points { display: flex; flex-wrap: wrap; gap: 1rem; }
+.points.muted { display: block; font-size: 0.85rem; }
+.ptgroup { min-width: 170px; }
+.ptlabel { font-size: 0.85rem; margin-bottom: 0.25rem; text-transform: capitalize; }
+.ptscroll { max-height: 220px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; background: #fff; }
+.table.compact th, .table.compact td { padding: 0.2rem 0.45rem; font-size: 0.78rem; border-bottom: 1px solid #eef1f6; }
+.table.compact tbody tr { cursor: default; }
+.table.compact tbody tr:hover { background: transparent; }

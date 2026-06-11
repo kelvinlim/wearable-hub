@@ -238,11 +238,27 @@ function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
   const [start, setStart] = useState(today());
   const [end, setEnd] = useState(today());
   const [busy, setBusy] = useState(false);
+  const [openDay, setOpenDay] = useState(null);
+  const [dayPts, setDayPts] = useState([]);
 
   const load = useCallback(() => guard(async () => setDaily(await api.daily(subject.id))), [guard, subject.id]);
   useEffect(() => {
     load();
   }, [load]);
+  useEffect(() => {
+    setOpenDay(null);
+    setDayPts([]);
+  }, [subject.id]);
+
+  const toggleDay = (date) =>
+    guard(async () => {
+      if (openDay === date) {
+        setOpenDay(null);
+        return;
+      }
+      setOpenDay(date);
+      setDayPts(await api.dayPoints(subject.id, date));
+    });
 
   return (
     <section className="panel">
@@ -294,15 +310,24 @@ function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
         </thead>
         <tbody>
           {daily.map((d) => (
-            <tr key={d.date}>
-              <td>{d.date}</td>
-              <td>{fmt(d.steps)}</td>
-              <td>{fmt(d.distance_m)}</td>
-              <td>{fmt(d.calories)}</td>
-              <td>{fmt(d.floors)}</td>
-              <td>{fmt(d.sleep_minutes)}</td>
-              <td className="muted">{d.point_count}</td>
-            </tr>
+            <React.Fragment key={d.date}>
+              <tr className="clickable" onClick={() => toggleDay(d.date)} title="Show intraday points">
+                <td>{openDay === d.date ? "▾" : "▸"} {d.date}</td>
+                <td>{fmt(d.steps)}</td>
+                <td>{fmt(d.distance_m)}</td>
+                <td>{fmt(d.calories)}</td>
+                <td>{fmt(d.floors)}</td>
+                <td>{fmt(d.sleep_minutes)}</td>
+                <td className="muted">{d.point_count}</td>
+              </tr>
+              {openDay === d.date && (
+                <tr className="detail-row">
+                  <td colSpan={7}>
+                    <PointsView points={dayPts} />
+                  </td>
+                </tr>
+              )}
+            </React.Fragment>
           ))}
           {daily.length === 0 && (
             <tr><td colSpan={7} className="muted">No consolidated days yet.</td></tr>
@@ -423,4 +448,49 @@ function UsersPanel({ guard }) {
 function fmt(v) {
   if (v == null) return <span className="muted">—</span>;
   return typeof v === "number" ? Math.round(v * 10) / 10 : v;
+}
+
+// UTC ISO + offset (seconds) -> local HH:MM
+function localTime(iso, offsetSec) {
+  if (!iso) return "—";
+  const d = new Date(iso.endsWith("Z") ? iso : iso + "Z");
+  if (typeof offsetSec === "number") d.setTime(d.getTime() + offsetSec * 1000);
+  return d.toISOString().slice(11, 16);
+}
+
+function PointsView({ points }) {
+  if (!points.length)
+    return (
+      <div className="points muted">
+        No intraday points for this day (floors &amp; calories are rollup-only — no raw points).
+      </div>
+    );
+  const groups = {};
+  for (const p of points) (groups[p.datatype] ||= []).push(p);
+  return (
+    <div className="points">
+      {Object.entries(groups).map(([dt, list]) => (
+        <div key={dt} className="ptgroup">
+          <div className="ptlabel">
+            <strong>{dt}</strong> <span className="muted">· {list.length} pts</span>
+          </div>
+          <div className="ptscroll">
+            <table className="table compact">
+              <tbody>
+                {list.map((p, i) => (
+                  <tr key={i}>
+                    <td className="muted">
+                      {localTime(p.start_time, p.tz_offset_seconds)}–
+                      {localTime(p.end_time, p.tz_offset_seconds)}
+                    </td>
+                    <td>{fmt(p.value)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }

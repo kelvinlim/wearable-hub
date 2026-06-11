@@ -36,6 +36,8 @@ export const api = {
       body: JSON.stringify(body),
     }),
   daily: (subjectId) => req(`/admin/subjects/${subjectId}/daily`),
+  dayPoints: (subjectId, day) =>
+    req(`/admin/subjects/${subjectId}/daily/${day}/points`),
   consolidate: (subjectId, start, end) =>
     req(`/admin/subjects/${subjectId}/consolidate?start=${start}&end=${end}`, {
       method: "POST",
