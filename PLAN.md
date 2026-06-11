@@ -201,6 +201,27 @@ when `token_expires_at` is near; updates stored tokens. Reused before any data r
 >   account linking; or (B) switch to MANUAL, resolve+store healthUserId, then call
 >   `create_subscription`. Recommend (A) to match the chosen AUTOMATIC config.
 
+> **Finding (2026-06-11) — Tier-2 (AUTOMATIC) VERIFIED END-TO-END.** ✅ A fresh enrollment
+> (revoke prior grant → re-consent) produced live data. Corrections to the earlier mental
+> model:
+> - **AUTOMATIC fires only on a *fresh* grant.** Re-consenting an existing grant does nothing;
+>   we revoke first via `POST oauth2.googleapis.com/revoke` (done programmatically with the
+>   stored refresh token). Not retroactive to already-consented subjects either.
+> - **AUTOMATIC subscriptions are NOT listable.** Google creates them named
+>   `auto-{proj}-{subscriber}-WEBHOOK_DATA_TYPE_*` but they don't show in
+>   `subscribers.subscriptions.list` (LIST stays empty). So the sync-from-LIST idea only
+>   applies to MANUAL; under AUTOMATIC, **account linking comes from the webhook payload**.
+> - **Real notification shape:** body is a JSON **array** of `{"data": {version,
+>   clientProvidedSubscriptionName, healthUserId, operation, dataType, intervals}}` items
+>   (batched, ~2–15/POST); interval start at `intervals[].physicalTimeInterval.startTime`.
+>   The old assumption (single dict with flat `startTime`) was wrong — webhook handler
+>   rewritten to parse the array, land one row per item, and link by `healthUserId`.
+> - **healthUserId** (e.g. `2390357961573276417`) ≠ OAuth `sub`; captured from the first
+>   webhook and stored on `provider_accounts.health_user_id` (conservative one-unlinked-account
+>   fallback). 219 real data points (steps/distance/calories/floors/altitude/sleep, Charge 6)
+>   landed and linked to the test subject.
+> - Also re-confirmed: **token refresh + pull read** work against the same account.
+
 **Webhook receiver ([webhooks.py](backend/app/routers/webhooks.py), patterned on garminrec):**
 - `POST /webhooks/google-health` — the registered subscriber endpoint. Parse notification,
   insert into `health_data`, **always return 200 fast** so Google doesn't disable the

@@ -63,15 +63,51 @@ def _parse_dt(value) -> datetime | None:
 
 
 def _interval_start(data: dict) -> datetime | None:
-    """Earliest start time across the notification's `intervals`, if present."""
+    """Earliest start time across the notification's `intervals`, if present.
+
+    Real shape (verified 2026-06-11): intervals[].physicalTimeInterval.startTime. Older/flat
+    `startTime` is accepted as a fallback.
+    """
     intervals = data.get("intervals")
     if not isinstance(intervals, list):
         return None
     for iv in intervals:
-        if isinstance(iv, dict):
-            dt = _parse_dt(iv.get("startTime") or iv.get("start_time"))
-            if dt:
-                return dt
+        if not isinstance(iv, dict):
+            continue
+        phys = iv.get("physicalTimeInterval")
+        src = phys if isinstance(phys, dict) else iv
+        dt = _parse_dt(src.get("startTime") or src.get("start_time"))
+        if dt:
+            return dt
+    return None
+
+
+def _resolve_account(db: Session, hid: str) -> "ProviderAccount | None":
+    """Find the provider_account for a healthUserId, linking it on first sighting.
+
+    Direct match on `health_user_id`; else the conservative fallback — if exactly one
+    registered account still lacks a healthUserId, this notification is theirs, so bind it.
+    """
+    acct = db.scalar(
+        select(ProviderAccount).where(
+            ProviderAccount.provider == fitbit_gh.NAME,
+            ProviderAccount.health_user_id == hid,
+        )
+    )
+    if acct:
+        return acct
+    candidates = list(
+        db.scalars(
+            select(ProviderAccount).where(
+                ProviderAccount.provider == fitbit_gh.NAME,
+                ProviderAccount.registered.is_(True),
+                ProviderAccount.health_user_id.is_(None),
+            )
+        )
+    )
+    if len(candidates) == 1:
+        candidates[0].health_user_id = hid
+        return candidates[0]
     return None
 
 
@@ -98,51 +134,45 @@ async def google_health(request: Request, db: Session = Depends(get_db)) -> Resp
         return Response(status_code=200)
 
     # Notification processing — never let an error reach Google (keeps the sub alive).
+    # Verified shape: the body is a JSON ARRAY of {"data": {...}} items (we also accept a lone
+    # dict). Land one health_data row per item; link by healthUserId (cached per request).
     try:
-        data = body.get("data") if isinstance(body, dict) else None
-        if not isinstance(data, dict):
+        if isinstance(body, list):
+            items = body
+        elif isinstance(body, dict) and isinstance(body.get("data"), dict):
+            items = [body]
+        else:
+            items = []
+
+        if not items:
             # Unknown shape — land verbatim rather than drop.
             db.add(HealthData(provider=fitbit_gh.NAME, payload=body))
             db.commit()
             return Response(status_code=200)
 
-        health_user_id = data.get("healthUserId")
-        acct = None
-        if health_user_id:
-            hid = str(health_user_id)
-            # healthUserId (Google's public per-user id) is captured on provider_accounts via
-            # /admin/subscriptions/sync; match on it, not the OAuth `sub`.
-            acct = db.scalar(
-                select(ProviderAccount).where(
-                    ProviderAccount.provider == fitbit_gh.NAME,
-                    ProviderAccount.health_user_id == hid,
+        acct_cache: dict[str, int | None] = {}
+        for item in items:
+            data = item.get("data") if isinstance(item, dict) else None
+            if not isinstance(data, dict):
+                db.add(HealthData(provider=fitbit_gh.NAME, payload=item))
+                continue
+            acct_id: int | None = None
+            hid = data.get("healthUserId")
+            if hid:
+                hid = str(hid)
+                if hid not in acct_cache:
+                    acct = _resolve_account(db, hid)
+                    acct_cache[hid] = acct.id if acct else None
+                acct_id = acct_cache[hid]
+            db.add(
+                HealthData(
+                    provider_account_id=acct_id,
+                    provider=fitbit_gh.NAME,
+                    datatype=data.get("dataType"),
+                    start_time=_interval_start(data),
+                    payload=item,
                 )
             )
-            if acct is None:
-                # First-webhook fallback link: if exactly one registered account still lacks a
-                # healthUserId, this notification must be theirs. Same conservative rule as sync.
-                candidates = list(
-                    db.scalars(
-                        select(ProviderAccount).where(
-                            ProviderAccount.provider == fitbit_gh.NAME,
-                            ProviderAccount.registered.is_(True),
-                            ProviderAccount.health_user_id.is_(None),
-                        )
-                    )
-                )
-                if len(candidates) == 1:
-                    acct = candidates[0]
-                    acct.health_user_id = hid
-
-        db.add(
-            HealthData(
-                provider_account_id=acct.id if acct else None,
-                provider=fitbit_gh.NAME,
-                datatype=data.get("dataType"),
-                start_time=_interval_start(data),
-                payload=body,
-            )
-        )
         db.commit()
     except Exception:  # noqa: BLE001 — never let an error reach the provider
         log.exception("Error processing Google Health webhook; returning 200 regardless")

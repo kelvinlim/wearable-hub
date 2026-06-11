@@ -26,8 +26,14 @@ schema; tokens encrypted at rest. Researcher auth/RBAC and Garmin are deferred.
   ALREADY_EXISTS` as success and reconciles the DB row from the live resource).
   `GET /admin/subscriber` reports status. Subscriber persisted in `project_subscribers`.
 - **Webhook receiver** — `POST /webhooks/google-health` satisfies Google's registration-time
-  verification handshake (authorized probe → 200, unauthorized → 401), lands payloads in
-  `health_data`, and always returns 200 fast so Google doesn't disable the subscription.
+  verification handshake (authorized probe → 200, unauthorized → 401), parses real
+  notifications, links them to subjects by `healthUserId`, lands them in `health_data`, and
+  always returns 200 fast so Google doesn't disable the subscription.
+- **Tier-2 per-user data flow (AUTOMATIC) — verified end-to-end.** After a fresh consent,
+  Google auto-creates per-user subscriptions and pushes webhook notifications with real
+  Fitbit data (Charge 6: steps, distance, calories, floors, altitude, sleep). Each
+  notification's `healthUserId` is captured and linked to the subject's account; 219 real
+  data points landed and linked for the test subject.
 - **Minimal admin API** — create study, create subject (auto entry code), list subjects +
   registration status. Unprotected for Milestone 1 (auth deferred).
 
@@ -48,28 +54,32 @@ schema; tokens encrypted at rest. Researcher auth/RBAC and Garmin are deferred.
   stored refresh token succeeds.
 - **Pull data read works** — `GET /v4/users/me/dataTypes/steps/dataPoints` with the subject's
   user token returns real Fitbit data (Charge 6, live step intervals).
-- **Tier-2 subscription shape confirmed** (project credentials):
-  `POST /v4/projects/{NUMBER}/subscribers/{sub}/subscriptions` with body
+- **AUTOMATIC behavior (verified):**
+  - Subscriptions are created on a **fresh authorization grant only** — re-consenting an
+    existing grant does nothing; the grant must be revoked first (we revoke via
+    `oauth2.googleapis.com/revoke`). It is also not retroactive to already-consented subjects.
+  - AUTOMATIC subscriptions (named `auto-{project}-{subscriber}-WEBHOOK_DATA_TYPE_*`) do
+    **not** appear in `subscribers.subscriptions.list` — so `/admin/subscriptions/sync` is for
+    MANUAL only; under AUTOMATIC, account linking comes from webhook payloads.
+- **Real notification shape (verified):** the webhook body is a JSON **array** of
+  `{"data": {version, clientProvidedSubscriptionName, healthUserId, operation, dataType,
+  intervals}}` items (Google batches up to ~15 per POST); interval start is at
+  `intervals[].physicalTimeInterval.startTime`. `healthUserId` (e.g. `2390357961573276417`)
+  differs from the OAuth `sub` and is the key used to link data to a subject.
+- **Tier-2 manual-create shape** (for the MANUAL path, if adopted):
+  `POST /v4/projects/{NUMBER}/subscribers/{sub}/subscriptions` with
   `{"user": "users/{healthUserId}", "dataTypes": [...]}`. `list_subscriptions()` /
-  `create_subscription()` corrected to this shape (previously used project ID + a non-existent
-  `userId` field). Two constraints found: (a) `user` needs the public **healthUserId**, which
-  is NOT the OAuth `sub` we store and is not in the id_token — it only appears in webhook
-  payloads / an auto-created subscription's `user` field; (b) manual create requires the
-  subscriber policy to be **MANUAL** — under AUTOMATIC, Google subscribes on consent.
-- **AUTOMATIC is not retroactive** — registering the subscriber does not subscribe
-  already-consented subjects; it fires on the consent event.
+  `create_subscription()` corrected to this (previously used project ID + a non-existent
+  `userId` field). Manual create requires the subscriber policy to be MANUAL.
 
 ### Not yet done (remaining Milestone 1)
 
-- **Tier-2 end-to-end** — shape + constraints now verified, but a live subscription has not
-  been observed. Under AUTOMATIC this needs a *fresh* browser consent (the existing subject
-  consented before the subscriber existed). Decide AUTOMATIC vs MANUAL: AUTOMATIC = less code
-  but needs browser consent to verify and healthUserId comes from the auto-created
-  subscription; MANUAL = fully controllable but we must resolve+store healthUserId first.
-- Full enroll → subscription → webhook → `health_data` walk-through with a real subject.
-- Webhook account linking: notification `healthUserId` differs from the stored OAuth `sub`
-  (confirmed), so data currently lands with a null account. Capture healthUserId from the
-  auto-created subscription's `user` field (or first webhook) and persist it on the account.
+- **Frontend (Vite)** — enroll page + minimal researcher page are still server-rendered
+  placeholders; not scaffolded as React.
+- **Revocation handling** — when a subject's grant is revoked (or Google sends a
+  deregistration notification), flip `provider_account.registered` automatically.
+- **Async processing of `health_data`** — payloads land raw; downstream normalization/
+  parsing into typed tables is deferred.
 - Frontend (Vite): enroll page + minimal researcher page — not scaffolded.
 - Token-refresh-before-read path exists but is unexercised.
 
