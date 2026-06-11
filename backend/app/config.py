@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     # AUTOMATIC = Google auto-creates per-user subscriptions on consent; MANUAL = we create them.
     gh_subscription_create_policy: str = "AUTOMATIC"
 
+    # --- Daily consolidation scheduler (the `scheduler` compose service) ---
+    # Nightly safety-net: re-mark recent days dirty + drain, at this hour (container TZ, UTC).
+    consolidation_nightly_hour: int = 4
+    # Also drain the pending dirty-day queue every N minutes (catches missed real-time tasks);
+    # set 0 to disable.
+    consolidation_drain_interval_minutes: int = 5
+
     # --- Project-level credentials for Tier-1 subscriber registration ---
     # Subscriber registration is a project op, NOT a user op (a subject's token gets 403).
     # Path to a service-account key JSON mounted into the container; empty → fall back to

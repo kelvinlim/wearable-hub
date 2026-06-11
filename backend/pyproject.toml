@@ -16,6 +16,7 @@ dependencies = [
     "requests>=2.32",  # google.auth.transport.requests needs it for token refresh
     "httpx>=0.28",
     "python-multipart>=0.0.18",
+    "apscheduler>=3.11",
 ]
 
 [project.optional-dependencies]

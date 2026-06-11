@@ -40,5 +40,18 @@ services:
       db:
         condition: service_healthy
 
+  scheduler:
+    # Daily-consolidation backstop: nightly safety-net + periodic dirty-queue drain.
+    # Same image as backend; overrides the serve command. Migrations are owned by `backend`.
+    build: ./backend
+    command: ["python", "-m", "app.scheduler"]
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: mysql+pymysql://${DB_USER:-wearable}:${DB_PASSWORD:-wearable}@db:3306/${DB_NAME:-wearable_hub}
+    depends_on:
+      db:
+        condition: service_healthy
+
 volumes:
   db_data:
