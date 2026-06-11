@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.crypto import encrypt
 from app.db import get_db
-from app.models import ProjectSubscriber, ProviderAccount, Subject, Subscription
+from app.models import ProjectSubscriber, ProviderAccount, Subject
 from app.providers import fitbit_gh
 
 log = logging.getLogger(__name__)
@@ -160,18 +160,15 @@ def _maybe_subscribe(db: Session, acct: ProviderAccount) -> None:
             acct.id,
         )
         return
-    try:
-        raw = fitbit_gh.create_subscription(subscriber.subscriber_id, acct.provider_user_id)
-        db.add(
-            Subscription(
-                provider_account_id=acct.id,
-                subscriber_id=subscriber.subscriber_id,
-                provider_subscription_id=raw.get("name") or raw.get("id"),
-                data_types=raw.get("dataTypes"),
-                status="active",
-            )
-        )
-        db.commit()
-    except Exception:  # noqa: BLE001 — enrollment must succeed regardless
-        log.exception("Tier-2 subscription failed for provider_account %s", acct.id)
-        db.rollback()
+
+    # MANUAL path needs the public healthUserId, which is NOT available at enrollment (the
+    # OAuth `sub` we store is rejected by the subscriptions API). It only arrives via webhook
+    # payloads / an auto-created subscription's `user` field. So we can't create a MANUAL
+    # subscription here yet. TODO(tier2-manual): if MANUAL is adopted, resolve healthUserId
+    # first (e.g. fitbit_gh.list_subscriptions(...) or capture it from the first webhook),
+    # persist it on provider_account, then call fitbit_gh.create_subscription(sub_id, hid, dts).
+    log.warning(
+        "MANUAL subscriptionCreatePolicy set but healthUserId for provider_account %s is "
+        "unknown at enrollment; deferring Tier-2 subscription creation.",
+        acct.id,
+    )

@@ -176,6 +176,31 @@ when `token_expires_at` is near; updates stored tokens. Reused before any data r
 > changes need `podman-compose build backend && up -d --force-recreate backend`, and the
 > entrypoint waits on the DB + runs migrations (~5–15s) before serving.
 
+> **Finding (2026-06-11) — Tier-2 characterized; refresh + pull read work; AUTOMATIC needs
+> a fresh consent to verify.** Verified live against the enrolled subject (acct id=2):
+> - **Refresh works** — refreshing the expired access token via the stored refresh token
+>   succeeds. **Pull read works** — `GET /v4/users/me/dataTypes/steps/dataPoints` with the
+>   subject token returns real Fitbit data (Charge 6, live intervals). So the data plane is
+>   reachable end-to-end via pull, independent of webhooks.
+> - **Tier-2 shape (verified):** `POST /v4/projects/{NUMBER}/subscribers/{sub}/subscriptions`,
+>   body = the Subscription resource: `{"user":"users/{healthUserId}","dataTypes":[...]}`.
+>   `create_subscription()`/`list_subscriptions()` corrected to this (were using project ID +
+>   a bogus `userId` field).
+> - **Blocker 1 — healthUserId:** the `user` field needs the public **healthUserId**, which
+>   is NOT the OAuth `sub` (`provider_user_id`) — Google rejects the sub with "Invalid user
+>   ID segment", and the id_token carries no health id (standard OIDC claims only).
+>   healthUserId is only obtainable from a webhook payload or an auto-created subscription's
+>   `user` field.
+> - **Blocker 2 — policy:** manual `create` requires `subscriptionCreatePolicy=MANUAL`. We
+>   registered **AUTOMATIC**, under which Google subscribes on consent and manual create is
+>   rejected. **AUTOMATIC is not retroactive** — the enrolled subject (consented before the
+>   subscriber existed) has no subscription; LIST is empty.
+> - **To finish Tier-2:** either (A) keep AUTOMATIC and do one *fresh* browser enrollment
+>   with a test Google user, then confirm a subscription appears in LIST and a webhook lands
+>   in `health_data` — and read healthUserId from the subscription's `user` field to fix
+>   account linking; or (B) switch to MANUAL, resolve+store healthUserId, then call
+>   `create_subscription`. Recommend (A) to match the chosen AUTOMATIC config.
+
 **Webhook receiver ([webhooks.py](backend/app/routers/webhooks.py), patterned on garminrec):**
 - `POST /webhooks/google-health` — the registered subscriber endpoint. Parse notification,
   insert into `health_data`, **always return 200 fast** so Google doesn't disable the

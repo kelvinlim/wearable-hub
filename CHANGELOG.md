@@ -44,15 +44,32 @@ schema; tokens encrypted at rest. Researcher auth/RBAC and Garmin are deferred.
   types are registered.
 - Subscriber `create` can return a long-running **Operation** (async endpoint verification);
   there is no GET-by-id route (only LIST), so the subscriber is resolved via LIST.
+- **Token refresh works** — refreshing the enrolled subject's expired access token via the
+  stored refresh token succeeds.
+- **Pull data read works** — `GET /v4/users/me/dataTypes/steps/dataPoints` with the subject's
+  user token returns real Fitbit data (Charge 6, live step intervals).
+- **Tier-2 subscription shape confirmed** (project credentials):
+  `POST /v4/projects/{NUMBER}/subscribers/{sub}/subscriptions` with body
+  `{"user": "users/{healthUserId}", "dataTypes": [...]}`. `list_subscriptions()` /
+  `create_subscription()` corrected to this shape (previously used project ID + a non-existent
+  `userId` field). Two constraints found: (a) `user` needs the public **healthUserId**, which
+  is NOT the OAuth `sub` we store and is not in the id_token — it only appears in webhook
+  payloads / an auto-created subscription's `user` field; (b) manual create requires the
+  subscriber policy to be **MANUAL** — under AUTOMATIC, Google subscribes on consent.
+- **AUTOMATIC is not retroactive** — registering the subscriber does not subscribe
+  already-consented subjects; it fires on the consent event.
 
 ### Not yet done (remaining Milestone 1)
 
-- **Tier-2 per-user subscription** — request/response shape and credential unverified; with
-  `subscriptionCreatePolicy=AUTOMATIC`, Google may auto-create per-user subscriptions on
-  consent. Needs end-to-end verification.
+- **Tier-2 end-to-end** — shape + constraints now verified, but a live subscription has not
+  been observed. Under AUTOMATIC this needs a *fresh* browser consent (the existing subject
+  consented before the subscriber existed). Decide AUTOMATIC vs MANUAL: AUTOMATIC = less code
+  but needs browser consent to verify and healthUserId comes from the auto-created
+  subscription; MANUAL = fully controllable but we must resolve+store healthUserId first.
 - Full enroll → subscription → webhook → `health_data` walk-through with a real subject.
-- Webhook account linking: notification `healthUserId` may differ from the stored OAuth
-  `sub`; data can currently land with a null account.
+- Webhook account linking: notification `healthUserId` differs from the stored OAuth `sub`
+  (confirmed), so data currently lands with a null account. Capture healthUserId from the
+  auto-created subscription's `user` field (or first webhook) and persist it on the account.
 - Frontend (Vite): enroll page + minimal researcher page — not scaffolded.
 - Token-refresh-before-read path exists but is unexercised.
 

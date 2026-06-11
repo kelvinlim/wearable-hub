@@ -266,20 +266,42 @@ def get_subscriber() -> dict | None:
     return None
 
 
-def create_subscription(
-    subscriber_id: str, provider_user_id: str | None, data_types: list[str] | None = None
-) -> dict:
-    """Tier-2: create a per-user subscription under the project subscriber. Returns raw JSON.
+def list_subscriptions(subscriber_id: str) -> list[dict]:
+    """List per-user subscriptions under the subscriber (project credentials). Verified shape.
 
-    Uses project credentials (the subscription resource lives under /projects/...). The user
-    is identified by `provider_user_id` in the body. TODO(subscription-shape): confirm the
-    exact body + credential against Google's docs once available.
+    Each Subscription has `name`, `user` (= "users/{healthUserId}") and `dataTypes`. Useful
+    after an AUTOMATIC enrollment to discover a subject's healthUserId from the `user` field.
     """
     s = get_settings()
-    url = f"{HEALTH_API_BASE}/projects/{s.gh_project_id}/subscribers/{subscriber_id}/subscriptions"
-    body: dict = {}
-    if provider_user_id:
-        body["userId"] = provider_user_id
+    url = f"{HEALTH_API_BASE}/projects/{s.gh_project_number}/subscribers/{subscriber_id}/subscriptions"
+    resp = httpx.get(
+        url, headers={"Authorization": f"Bearer {project_access_token()}"}, timeout=_HTTP_TIMEOUT
+    )
+    resp.raise_for_status()
+    return resp.json().get("subscriptions", [])
+
+
+def create_subscription(
+    subscriber_id: str, health_user_id: str, data_types: list[str] | None = None
+) -> dict:
+    """Tier-2 (MANUAL policy only): create a per-user subscription. Returns the raw resource.
+
+    Verified against the live API (2026-06-11):
+      POST /v4/projects/{project-NUMBER}/subscribers/{subscriber}/subscriptions
+      body (the Subscription resource itself): {"user": "users/{healthUserId}", "dataTypes":[...]}
+
+    NOTES from verification:
+      - `user` requires the public **healthUserId**, NOT the OAuth `sub` we store as
+        `provider_user_id` (Google rejects the sub: "Invalid user ID segment"). The
+        healthUserId is only available from webhook payloads or an auto-created
+        subscription's `user` field — capture it before calling this.
+      - Only works when the subscriber's `subscriptionCreatePolicy` is **MANUAL** for those
+        data types. Under **AUTOMATIC** (current config) Google creates subscriptions itself
+        on user consent and this call is unnecessary (and rejected).
+    """
+    s = get_settings()
+    url = f"{HEALTH_API_BASE}/projects/{s.gh_project_number}/subscribers/{subscriber_id}/subscriptions"
+    body: dict = {"user": f"users/{health_user_id}"}
     if data_types:
         body["dataTypes"] = data_types
     resp = httpx.post(
