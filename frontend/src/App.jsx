@@ -323,7 +323,7 @@ function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
               {openDay === d.date && (
                 <tr className="detail-row">
                   <td colSpan={7}>
-                    <PointsView points={dayPts} />
+                    <PointsView points={dayPts} daily={d} />
                   </td>
                 </tr>
               )}
@@ -458,7 +458,71 @@ function localTime(iso, offsetSec) {
   return d.toISOString().slice(11, 16);
 }
 
-function PointsView({ points }) {
+const STAGE_ORDER = ["DEEP", "REM", "LIGHT", "AWAKE"];
+
+function stageMinutes(stages) {
+  const m = {};
+  for (const s of stages || []) {
+    const a = new Date(s.start_time);
+    const b = new Date(s.end_time);
+    if (isNaN(a) || isNaN(b)) continue;
+    m[s.type || "?"] = (m[s.type || "?"] || 0) + Math.round((b - a) / 60000);
+  }
+  return m;
+}
+
+function StageChips({ stages }) {
+  const keys = STAGE_ORDER.filter((k) => stages?.[k]);
+  if (!keys.length) return null;
+  return (
+    <span className="stagechips">
+      {keys.map((k) => (
+        <span key={k} className={`chip stage-${k.toLowerCase()}`}>
+          {k.toLowerCase()} {stages[k]}m
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function SleepGroup({ sessions, summary }) {
+  return (
+    <div className="ptgroup sleep">
+      <div className="ptlabel">
+        <strong>Sleep</strong>
+        {summary ? (
+          <span className="muted">
+            {" "}· {summary.asleep_min}m asleep / {summary.total_min}m in bed · {summary.segments} session
+            {summary.segments === 1 ? "" : "s"}
+          </span>
+        ) : null}
+      </div>
+      {summary?.stages && (
+        <div className="sleepday">
+          <StageChips stages={summary.stages} />
+        </div>
+      )}
+      <div className="sleepsessions">
+        {sessions.map((s, i) => {
+          const a = new Date(s.start_time + "Z");
+          const b = new Date(s.end_time + "Z");
+          const dur = !isNaN(a) && !isNaN(b) ? Math.round((b - a) / 60000) : null;
+          return (
+            <div key={i} className="sleepsession">
+              <div className="small muted">
+                {localTime(s.start_time, s.tz_offset_seconds)}–{localTime(s.end_time, s.tz_offset_seconds)}
+                {dur != null ? ` · ${dur}m` : ""}
+              </div>
+              <StageChips stages={stageMinutes(s.stages)} />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function PointsView({ points, daily }) {
   if (!points.length)
     return (
       <div className="points muted">
@@ -469,28 +533,32 @@ function PointsView({ points }) {
   for (const p of points) (groups[p.datatype] ||= []).push(p);
   return (
     <div className="points">
-      {Object.entries(groups).map(([dt, list]) => (
-        <div key={dt} className="ptgroup">
-          <div className="ptlabel">
-            <strong>{dt}</strong> <span className="muted">· {list.length} pts</span>
+      {Object.entries(groups).map(([dt, list]) =>
+        dt === "sleep" ? (
+          <SleepGroup key="sleep" sessions={list} summary={daily?.metrics?.sleep} />
+        ) : (
+          <div key={dt} className="ptgroup">
+            <div className="ptlabel">
+              <strong>{dt}</strong> <span className="muted">· {list.length} pts</span>
+            </div>
+            <div className="ptscroll">
+              <table className="table compact">
+                <tbody>
+                  {list.map((p, i) => (
+                    <tr key={i}>
+                      <td className="muted">
+                        {localTime(p.start_time, p.tz_offset_seconds)}–
+                        {localTime(p.end_time, p.tz_offset_seconds)}
+                      </td>
+                      <td>{fmt(p.value)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
-          <div className="ptscroll">
-            <table className="table compact">
-              <tbody>
-                {list.map((p, i) => (
-                  <tr key={i}>
-                    <td className="muted">
-                      {localTime(p.start_time, p.tz_offset_seconds)}–
-                      {localTime(p.end_time, p.tz_offset_seconds)}
-                    </td>
-                    <td>{fmt(p.value)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ))}
+        )
+      )}
     </div>
   );
 }

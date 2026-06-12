@@ -423,16 +423,29 @@ def list_day_points(
         )
         .order_by(HealthDataPoint.datatype, HealthDataPoint.start_time)
     )
-    return [
-        {
+    out: list[dict] = []
+    for r in rows:
+        item = {
             "datatype": r.datatype,
             "start_time": r.start_time.isoformat() if r.start_time else None,
             "end_time": r.end_time.isoformat() if r.end_time else None,
             "value": r.value,
             "tz_offset_seconds": r.tz_offset_seconds,
         }
-        for r in rows
-    ]
+        # Sleep carries its stage architecture in the payload — surface it for the UI.
+        if r.datatype == "sleep" and isinstance(r.payload, dict):
+            stages = (r.payload.get("sleep") or {}).get("stages") or []
+            item["stages"] = [
+                {
+                    "type": s.get("type"),
+                    "start_time": s.get("startTime"),
+                    "end_time": s.get("endTime"),
+                }
+                for s in stages
+                if isinstance(s, dict)
+            ]
+        out.append(item)
+    return out
 
 
 @router.get("/studies/{study_id}/subjects", response_model=list[SubjectStatusOut])

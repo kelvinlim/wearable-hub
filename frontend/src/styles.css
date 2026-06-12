@@ -91,3 +91,19 @@ select { padding: 0.45rem; border: 1px solid var(--border); border-radius: 6px; 
 .table.compact th, .table.compact td { padding: 0.2rem 0.45rem; font-size: 0.78rem; border-bottom: 1px solid #eef1f6; }
 .table.compact tbody tr { cursor: default; }
 .table.compact tbody tr:hover { background: transparent; }
+
+/* Sleep stage detail */
+.ptgroup.sleep { min-width: 260px; }
+.stagechips { display: inline-flex; flex-wrap: wrap; gap: 0.3rem; }
+.chip {
+  font-size: 0.72rem; padding: 0.08rem 0.45rem; border-radius: 999px;
+  background: #eceef2; color: #333; white-space: nowrap;
+}
+.chip.stage-deep { background: #d9e2ff; color: #1b3a8f; }
+.chip.stage-rem { background: #e2d9ff; color: #4b2a8f; }
+.chip.stage-light { background: #d9f0ff; color: #1b5a8f; }
+.chip.stage-awake { background: #ffe6d9; color: #8f4a1b; }
+.sleepday { margin: 0.3rem 0 0.5rem; }
+.sleepsessions { display: flex; flex-direction: column; gap: 0.4rem; }
+.sleepsession { border: 1px solid var(--border); border-radius: 6px; padding: 0.35rem 0.5rem; background: #fff; }
+.sleepsession .small { margin-bottom: 0.25rem; }
