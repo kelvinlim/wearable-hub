@@ -35,6 +35,7 @@ from app.schemas import (
     MemberOut,
     StudyCreate,
     StudyOut,
+    StudyUpdate,
     SubjectCreate,
     SubjectOut,
     SubjectStatusOut,
@@ -87,6 +88,25 @@ def list_studies(
     if not study_ids:
         return []
     return list(db.scalars(select(Study).where(Study.id.in_(study_ids)).order_by(Study.id)))
+
+
+@router.patch("/studies/{study_id}", response_model=StudyOut)
+def update_study(
+    study_id: int,
+    payload: StudyUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Study:
+    """Update study settings (e.g. opt in to intraday heart-rate). Study admin or superuser."""
+    study = db.get(Study, study_id)
+    if study is None:
+        raise HTTPException(status_code=404, detail="Study not found")
+    assert_study_admin(db, user, study_id)
+    if payload.ingest_intraday_hr is not None:
+        study.ingest_intraday_hr = payload.ingest_intraday_hr
+    db.commit()
+    db.refresh(study)
+    return study
 
 
 @router.post("/studies/{study_id}/subjects", response_model=SubjectOut, status_code=201)

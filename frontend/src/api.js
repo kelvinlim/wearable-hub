@@ -29,6 +29,8 @@ export const api = {
   listStudies: () => req("/admin/studies"),
   createStudy: (body) =>
     req("/admin/studies", { method: "POST", body: JSON.stringify(body) }),
+  updateStudy: (studyId, body) =>
+    req(`/admin/studies/${studyId}`, { method: "PATCH", body: JSON.stringify(body) }),
   listSubjects: (studyId) => req(`/admin/studies/${studyId}/subjects`),
   createSubject: (studyId, body) =>
     req(`/admin/studies/${studyId}/subjects`, {

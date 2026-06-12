@@ -124,6 +124,13 @@ function Console({ me, onLogout }) {
             <p className="muted">Select or create a study.</p>
           ) : (
             <>
+              {canAdmin(studyId) && (
+                <StudySettings
+                  study={studies.find((s) => s.id === studyId)}
+                  guard={guard}
+                  onChanged={loadStudies}
+                />
+              )}
               <SubjectsPanel
                 subjects={subjects}
                 selected={subject}
@@ -150,6 +157,27 @@ function Console({ me, onLogout }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function StudySettings({ study, guard, onChanged }) {
+  if (!study) return null;
+  return (
+    <section className="panel compact-panel">
+      <label className="small">
+        <input
+          type="checkbox"
+          checked={!!study.ingest_intraday_hr}
+          onChange={(e) =>
+            guard(async () => {
+              await api.updateStudy(study.id, { ingest_intraday_hr: e.target.checked });
+              onChanged();
+            })
+          }
+        />{" "}
+        Ingest intraday heart rate (downsampled) for this study
+      </label>
+    </section>
   );
 }
 

@@ -27,9 +27,17 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.crypto import decrypt, encrypt
 from app.db import SessionLocal
-from app.models import ConsolidationState, DailyHealth, HealthDataPoint, ProviderAccount
+from app.models import (
+    ConsolidationState,
+    DailyHealth,
+    HealthDataPoint,
+    ProviderAccount,
+    Study,
+    Subject,
+)
 from app.providers import fitbit_gh
 
 log = logging.getLogger(__name__)
@@ -205,6 +213,57 @@ def pull_daily_value(token: str, read_id: str, d: date, date_field: str) -> dict
     return None
 
 
+_EPOCH = datetime(1970, 1, 1)
+
+
+def pull_intraday_hr(token: str, d: date, tz_off: int | None, bucket_min: int) -> list[dict]:
+    """Pull the day's heart-rate samples (UTC window for the local day) and downsample to
+    `bucket_min`-minute average-BPM buckets (bucket_min<=0 keeps raw samples). Returns
+    [{start, end, avg, n}]."""
+    offset = tz_off or 0
+    start_utc = datetime(d.year, d.month, d.day) - timedelta(seconds=offset)
+    end_utc = start_utc + timedelta(days=1)
+    flt = (
+        f'heart_rate.sample_time.physical_time >= "{start_utc.isoformat()}Z" '
+        f'AND heart_rate.sample_time.physical_time < "{end_utc.isoformat()}Z"'
+    )
+    url = f"{_BASE}/users/me/dataTypes/heart-rate/dataPoints"
+    samples: list[tuple[int, float]] = []
+    page_token = None
+    for _ in range(100):
+        params = {"filter": flt, "pageSize": "1000"}
+        if page_token:
+            params["pageToken"] = page_token
+        r = httpx.get(url, params=params, headers=_auth(token), timeout=_TIMEOUT)
+        r.raise_for_status()
+        j = r.json()
+        for dp in j.get("dataPoints") or []:
+            hr = dp.get("heartRate") or {}
+            t = _parse_iso((hr.get("sampleTime") or {}).get("physicalTime"))
+            bpm = _num(hr.get("beatsPerMinute"))
+            if t is not None and bpm is not None:
+                samples.append((int((t - _EPOCH).total_seconds()), bpm))
+        page_token = j.get("nextPageToken")
+        if not page_token:
+            break
+
+    def _utc(epoch: int) -> datetime:
+        return datetime.fromtimestamp(epoch, timezone.utc).replace(tzinfo=None)
+
+    if bucket_min <= 0:
+        return [{"start": _utc(e), "end": _utc(e), "avg": round(b, 1), "n": 1} for e, b in samples]
+    bsec = bucket_min * 60
+    buckets: dict[int, tuple[float, int]] = {}
+    for e, b in samples:
+        k = e - (e % bsec)
+        s, c = buckets.get(k, (0.0, 0))
+        buckets[k] = (s + b, c + 1)
+    return [
+        {"start": _utc(k), "end": _utc(k + bsec), "avg": round(s / c, 1), "n": c}
+        for k, (s, c) in sorted(buckets.items())
+    ]
+
+
 def pull_points(
     token: str, read_id: str, d: date, page_size: int = 1000, filterable: bool = True
 ) -> list[dict]:
@@ -334,6 +393,26 @@ def _upsert_point(db: Session, account_id: int, datatype: str, d: date, dp: dict
     row.payload = dp
 
 
+def _upsert_hr_bucket(db: Session, account_id: int, d: date, bkt: dict, offset: int, bucket_min: int) -> None:
+    point_key = f"heart_rate|{bkt['start'].isoformat()}"
+    row = db.scalar(
+        select(HealthDataPoint).where(
+            HealthDataPoint.provider_account_id == account_id,
+            HealthDataPoint.datatype == "heart_rate",
+            HealthDataPoint.point_key == point_key,
+        )
+    )
+    if row is None:
+        row = HealthDataPoint(provider_account_id=account_id, datatype="heart_rate", point_key=point_key)
+        db.add(row)
+    row.local_date = d
+    row.start_time = bkt["start"]
+    row.end_time = bkt["end"]
+    row.tz_offset_seconds = offset
+    row.value = bkt["avg"]
+    row.payload = {"bpm_avg": bkt["avg"], "samples": bkt["n"], "bucket_minutes": bucket_min}
+
+
 def _get_or_create_state(db: Session, account_id: int, d: date) -> ConsolidationState:
     row = db.scalar(
         select(ConsolidationState).where(
@@ -437,6 +516,24 @@ def consolidate_day(db: Session, account: ProviderAccount, d: date) -> Consolida
                 typed["hrv_ms"] = round(ms, 1)
     except httpx.HTTPStatusError as exc:
         errors["hrv:list"] = exc.response.status_code
+
+    # Intraday heart rate — OPT-IN per study, downsampled to N-minute buckets (raw HR is
+    # 1000+ samples/day). Stored as `heart_rate` points so they show in the day expansion + export.
+    subj = db.get(Subject, account.subject_id)
+    study = db.get(Study, subj.study_id) if subj else None
+    if study and study.ingest_intraday_hr:
+        try:
+            bucket_min = get_settings().hr_downsample_minutes
+            buckets = pull_intraday_hr(token, d, tz_off, bucket_min)
+            for bkt in buckets:
+                _upsert_hr_bucket(db, account.id, d, bkt, tz_off or 0, bucket_min)
+            point_count += len(buckets)
+            hr_meta = metrics.get("heart_rate")
+            if isinstance(hr_meta, dict):
+                hr_meta["intraday_buckets"] = len(buckets)
+                hr_meta["bucket_minutes"] = bucket_min
+        except httpx.HTTPStatusError as exc:
+            errors["heart_rate:intraday"] = exc.response.status_code
 
     if errors:
         metrics["_errors"] = errors

@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     # Also drain the pending dirty-day queue every N minutes (catches missed real-time tasks);
     # set 0 to disable.
     consolidation_drain_interval_minutes: int = 5
+    # Intraday heart-rate (opt-in per study) is downsampled to N-minute bucket averages before
+    # storage (raw HR is 1000+ samples/day). Set 0 to store raw samples (heavy).
+    hr_downsample_minutes: int = 5
 
     # --- Project-level credentials for Tier-1 subscriber registration ---
     # Subscriber registration is a project op, NOT a user op (a subject's token gets 403).

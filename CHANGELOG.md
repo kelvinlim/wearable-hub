@@ -84,9 +84,15 @@ schema; tokens encrypted at rest. Researcher auth/RBAC and Garmin are deferred.
   average/min/max BPM via `dailyRollUp`, plus resting HR and HRV via day-filtered `list`
   (read ids `heart-rate`, `daily-resting-heart-rate`, `daily-heart-rate-variability`). Stored as
   typed `daily_health.hr_avg`/`resting_hr`/`hrv_ms` columns (migration 0006) + full detail in
-  `metrics`; surfaced in the console daily table, JSON export, and daily CSV. Raw intraday HR
-  (1000+ samples/day) is intentionally not stored. Days get pulled via other datatypes' dirty
-  marking + the nightly job; older rows backfill HR/HRV on the next consolidation.
+  `metrics`; surfaced in the console daily table, JSON export, and daily CSV. Days get pulled
+  via other datatypes' dirty marking + the nightly job; older rows backfill HR/HRV on the next
+  consolidation.
+- **Intraday heart rate (opt-in per study)** — raw HR is 1000+ samples/day, so it's off by
+  default and **downsampled**: a `studies.ingest_intraday_hr` flag (migration 0007; toggle in
+  the console / `PATCH /admin/studies/{id}`) makes consolidation pull the day's HR samples and
+  store **N-minute average-BPM buckets** (`HR_DOWNSAMPLE_MINUTES`, default 5 → ~288/day) as
+  `heart_rate` points — visible in the day expansion and the export. Verified: 288 buckets/day
+  (e.g. 16:00–16:05 UTC → 63.1 BPM from 129 samples).
 - **Revocation handling** — three converging triggers flip `provider_account.registered` and
   drop stored tokens: (1) **outbound** `POST /admin/subjects/{id}/revoke` revokes the grant at
   Google then marks the account revoked; (2) **reactive** — a token refresh returning
