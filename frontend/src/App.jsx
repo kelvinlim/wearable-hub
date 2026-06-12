@@ -265,6 +265,13 @@ function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
       <h2>
         {subject.subject_label || "Subject"} <code>{subject.entry_code}</code>{" "}
         {subject.registered ? <span className="badge ok">linked</span> : <span className="badge">not linked</span>}
+        <button
+          className="ghost small downloadbtn"
+          onClick={() => downloadJson(subject, guard)}
+          title="Download all daily + intraday data as JSON"
+        >
+          ⭳ JSON
+        </button>
       </h2>
 
       {canAdmin && (
@@ -448,6 +455,21 @@ function UsersPanel({ guard }) {
 function fmt(v) {
   if (v == null) return <span className="muted">—</span>;
   return typeof v === "number" ? Math.round(v * 10) / 10 : v;
+}
+
+function downloadJson(subject, guard) {
+  guard(async () => {
+    const data = await api.exportSubject(subject.id);
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${(subject.subject_label || "subject").replace(/\s+/g, "_")}-${subject.entry_code}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  });
 }
 
 // UTC ISO + offset (seconds) -> local HH:MM

@@ -66,6 +66,7 @@ code { background: #eef1f6; padding: 0.05rem 0.35rem; border-radius: 4px; font-s
 .side { display: flex; flex-direction: column; gap: 1rem; }
 button.ghost { background: transparent; color: var(--accent); border: 1px solid var(--border); }
 button.ghost.small, .ghost.small { padding: 0.1rem 0.4rem; font-size: 0.75rem; margin-left: 0.4rem; }
+.downloadbtn { float: right; font-size: 0.85rem; padding: 0.25rem 0.6rem; }
 .small { font-size: 0.8rem; }
 .clickable { cursor: pointer; user-select: none; }
 select { padding: 0.45rem; border: 1px solid var(--border); border-radius: 6px; font-size: 0.9rem; }

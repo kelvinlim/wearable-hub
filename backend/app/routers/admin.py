@@ -400,6 +400,25 @@ def list_daily(
     ]
 
 
+def _point_to_dict(r: HealthDataPoint) -> dict:
+    """Serialize one intraday point; sleep includes its parsed stage architecture."""
+    item = {
+        "datatype": r.datatype,
+        "start_time": r.start_time.isoformat() if r.start_time else None,
+        "end_time": r.end_time.isoformat() if r.end_time else None,
+        "value": r.value,
+        "tz_offset_seconds": r.tz_offset_seconds,
+    }
+    if r.datatype == "sleep" and isinstance(r.payload, dict):
+        stages = (r.payload.get("sleep") or {}).get("stages") or []
+        item["stages"] = [
+            {"type": s.get("type"), "start_time": s.get("startTime"), "end_time": s.get("endTime")}
+            for s in stages
+            if isinstance(s, dict)
+        ]
+    return item
+
+
 @router.get("/subjects/{subject_id}/daily/{day}/points")
 def list_day_points(
     subject_id: int,
@@ -423,29 +442,70 @@ def list_day_points(
         )
         .order_by(HealthDataPoint.datatype, HealthDataPoint.start_time)
     )
-    out: list[dict] = []
-    for r in rows:
-        item = {
-            "datatype": r.datatype,
-            "start_time": r.start_time.isoformat() if r.start_time else None,
-            "end_time": r.end_time.isoformat() if r.end_time else None,
-            "value": r.value,
-            "tz_offset_seconds": r.tz_offset_seconds,
+    return [_point_to_dict(r) for r in rows]
+
+
+@router.get("/subjects/{subject_id}/export")
+def export_subject(
+    subject_id: int,
+    start: date | None = None,
+    end: date | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Full JSON export for a subject: each local day's consolidated summary with its intraday
+    points (incl. sleep stages) nested underneath. Optional [start, end] date filter. Study view."""
+    assert_study_view(db, user, study_id_for_subject(db, subject_id))
+    subj = db.get(Subject, subject_id)
+    acct = _fitbit_account(db, subject_id)
+
+    dq = select(DailyHealth).where(DailyHealth.provider_account_id == acct.id)
+    pq = select(HealthDataPoint).where(HealthDataPoint.provider_account_id == acct.id)
+    if start:
+        dq = dq.where(DailyHealth.local_date >= start)
+        pq = pq.where(HealthDataPoint.local_date >= start)
+    if end:
+        dq = dq.where(DailyHealth.local_date <= end)
+        pq = pq.where(HealthDataPoint.local_date <= end)
+
+    by_day: dict = {}
+    for r in db.scalars(
+        pq.order_by(HealthDataPoint.local_date, HealthDataPoint.datatype, HealthDataPoint.start_time)
+    ):
+        by_day.setdefault(r.local_date, []).append(_point_to_dict(r))
+
+    days = [
+        {
+            "date": d.local_date.isoformat(),
+            "tz_offset_seconds": d.tz_offset_seconds,
+            "steps": d.steps,
+            "distance_m": d.distance_m,
+            "calories": d.calories,
+            "floors": d.floors,
+            "sleep_minutes": d.sleep_minutes,
+            "metrics": d.metrics,
+            "point_count": d.point_count,
+            "points": by_day.get(d.local_date, []),
         }
-        # Sleep carries its stage architecture in the payload — surface it for the UI.
-        if r.datatype == "sleep" and isinstance(r.payload, dict):
-            stages = (r.payload.get("sleep") or {}).get("stages") or []
-            item["stages"] = [
-                {
-                    "type": s.get("type"),
-                    "start_time": s.get("startTime"),
-                    "end_time": s.get("endTime"),
-                }
-                for s in stages
-                if isinstance(s, dict)
-            ]
-        out.append(item)
-    return out
+        for d in db.scalars(dq.order_by(DailyHealth.local_date))
+    ]
+    return {
+        "subject": {
+            "id": subj.id,
+            "subject_label": subj.subject_label,
+            "entry_code": subj.entry_code,
+            "study_id": subj.study_id,
+            "status": subj.status,
+            "provider": acct.provider,
+            "registered": acct.registered,
+            "health_user_id": acct.health_user_id,
+        },
+        "range": {
+            "start": start.isoformat() if start else None,
+            "end": end.isoformat() if end else None,
+        },
+        "days": days,
+    }
 
 
 @router.get("/studies/{study_id}/subjects", response_model=list[SubjectStatusOut])
