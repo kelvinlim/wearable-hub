@@ -80,6 +80,13 @@ schema; tokens encrypted at rest. Researcher auth/RBAC and Garmin are deferred.
   `POST /admin/subjects/{id}/consolidate?start=&end=` (backfill). Idempotent (unique keys); revoked tokens mark the day `error` and flip the account.
   Verified end-to-end: subject 3 / 2026-06-11 — steps/distance/calories/sleep populated, raw-point
   sum == rollup, re-run produced no duplicates.
+- **Heart rate + HRV** — NOT webhook-subscribable, so pulled during consolidation: daily
+  average/min/max BPM via `dailyRollUp`, plus resting HR and HRV via day-filtered `list`
+  (read ids `heart-rate`, `daily-resting-heart-rate`, `daily-heart-rate-variability`). Stored as
+  typed `daily_health.hr_avg`/`resting_hr`/`hrv_ms` columns (migration 0006) + full detail in
+  `metrics`; surfaced in the console daily table, JSON export, and daily CSV. Raw intraday HR
+  (1000+ samples/day) is intentionally not stored. Days get pulled via other datatypes' dirty
+  marking + the nightly job; older rows backfill HR/HRV on the next consolidation.
 - **Revocation handling** — three converging triggers flip `provider_account.registered` and
   drop stored tokens: (1) **outbound** `POST /admin/subjects/{id}/revoke` revokes the grant at
   Google then marks the account revoked; (2) **reactive** — a token refresh returning

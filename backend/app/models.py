@@ -226,6 +226,9 @@ class DailyHealth(Base):
     calories: Mapped[float | None] = mapped_column(Float)
     floors: Mapped[int | None] = mapped_column()
     sleep_minutes: Mapped[int | None] = mapped_column()
+    hr_avg: Mapped[float | None] = mapped_column(Float)  # daily average BPM
+    resting_hr: Mapped[int | None] = mapped_column()  # daily resting BPM
+    hrv_ms: Mapped[float | None] = mapped_column(Float)  # daily HRV (avg ms)
 
     metrics: Mapped[dict | None] = mapped_column(JSON)
     point_count: Mapped[int] = mapped_column(default=0, nullable=False)

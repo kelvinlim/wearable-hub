@@ -330,7 +330,8 @@ function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
       <table className="table">
         <thead>
           <tr>
-            <th>Date</th><th>Steps</th><th>Distance (m)</th><th>Calories</th><th>Floors</th><th>Sleep (min)</th><th>Points</th>
+            <th>Date</th><th>Steps</th><th>Distance (m)</th><th>Calories</th><th>Floors</th>
+            <th>Sleep (min)</th><th>HR avg</th><th>Rest HR</th><th>HRV (ms)</th><th>Points</th>
           </tr>
         </thead>
         <tbody>
@@ -343,11 +344,14 @@ function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
                 <td>{fmt(d.calories)}</td>
                 <td>{fmt(d.floors)}</td>
                 <td>{fmt(d.sleep_minutes)}</td>
+                <td>{fmt(d.hr_avg)}</td>
+                <td>{fmt(d.resting_hr)}</td>
+                <td>{fmt(d.hrv_ms)}</td>
                 <td className="muted">{d.point_count}</td>
               </tr>
               {openDay === d.date && (
                 <tr className="detail-row">
-                  <td colSpan={7}>
+                  <td colSpan={10}>
                     <PointsView points={dayPts} daily={d} />
                   </td>
                 </tr>
@@ -355,7 +359,7 @@ function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
             </React.Fragment>
           ))}
           {daily.length === 0 && (
-            <tr><td colSpan={7} className="muted">No consolidated days yet.</td></tr>
+            <tr><td colSpan={10} className="muted">No consolidated days yet.</td></tr>
           )}
         </tbody>
       </table>
@@ -500,6 +504,7 @@ function csvRow(vals) {
 function dailyCsv(data) {
   const head = [
     "date", "tz_offset_seconds", "steps", "distance_m", "calories", "floors", "sleep_minutes",
+    "hr_avg", "resting_hr", "hrv_ms",
     "sleep_total_min", "sleep_asleep_min", "awake_min", "light_min", "deep_min", "rem_min", "point_count",
   ];
   const rows = [csvRow(head)];
@@ -509,6 +514,7 @@ function dailyCsv(data) {
     rows.push(
       csvRow([
         d.date, d.tz_offset_seconds, d.steps, d.distance_m, d.calories, d.floors, d.sleep_minutes,
+        d.hr_avg, d.resting_hr, d.hrv_ms,
         sl.total_min, sl.asleep_min, st.AWAKE, st.LIGHT, st.DEEP, st.REM, d.point_count,
       ])
     );

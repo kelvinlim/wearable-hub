@@ -188,6 +188,23 @@ def _point_local_date(dp: dict, read_id: str) -> date | None:
     return (start + timedelta(seconds=off)).date()
 
 
+def pull_daily_value(token: str, read_id: str, d: date, date_field: str) -> dict | None:
+    """For 'daily' types (resting-HR, HRV) that aren't rollup-able: list the one point on day
+    `d` (filtered by its `date` field) and return its value object, or None."""
+    nxt = d + timedelta(days=1)
+    flt = f'{date_field} >= "{d.isoformat()}" AND {date_field} < "{nxt.isoformat()}"'
+    url = f"{_BASE}/users/me/dataTypes/{read_id}/dataPoints"
+    r = httpx.get(url, params={"filter": flt, "pageSize": "5"}, headers=_auth(token), timeout=_TIMEOUT)
+    r.raise_for_status()
+    dps = r.json().get("dataPoints") or []
+    if not dps:
+        return None
+    for k, v in dps[0].items():  # value object is the one non-meta key
+        if k not in ("dataSource", "name") and isinstance(v, dict):
+            return v
+    return None
+
+
 def pull_points(
     token: str, read_id: str, d: date, page_size: int = 1000, filterable: bool = True
 ) -> list[dict]:
@@ -391,6 +408,36 @@ def consolidate_day(db: Session, account: ProviderAccount, d: date) -> Consolida
                 errors[f"{name}:list"] = exc.response.status_code
                 log.warning("list %s failed: %s %s", name, exc.response.status_code, exc.response.text[:120])
 
+    # Heart rate + HRV — pull-only (NOT webhook-subscribable). heart-rate has a daily rollup
+    # (avg/min/max BPM); resting-HR and HRV are day-keyed list types. Fault-isolated.
+    try:
+        hr = pull_daily_rollup(token, "heart-rate", d)
+        if hr:
+            metrics["heart_rate"] = hr
+            avg = _num(hr.get("beatsPerMinuteAvg"))
+            if avg is not None:
+                typed["hr_avg"] = round(avg, 1)
+    except httpx.HTTPStatusError as exc:
+        errors["heart_rate:rollup"] = exc.response.status_code
+    try:
+        rhr = pull_daily_value(token, "daily-resting-heart-rate", d, "daily_resting_heart_rate.date")
+        if rhr:
+            metrics["resting_hr"] = rhr
+            bpm = _num(rhr.get("beatsPerMinute"))
+            if bpm is not None:
+                typed["resting_hr"] = int(bpm)
+    except httpx.HTTPStatusError as exc:
+        errors["resting_hr:list"] = exc.response.status_code
+    try:
+        hrv = pull_daily_value(token, "daily-heart-rate-variability", d, "daily_heart_rate_variability.date")
+        if hrv:
+            metrics["hrv"] = hrv
+            ms = _num(hrv.get("averageHeartRateVariabilityMilliseconds"))
+            if ms is not None:
+                typed["hrv_ms"] = round(ms, 1)
+    except httpx.HTTPStatusError as exc:
+        errors["hrv:list"] = exc.response.status_code
+
     if errors:
         metrics["_errors"] = errors
     _upsert_daily(db, account, d, typed, metrics, point_count, tz_off)
@@ -416,6 +463,9 @@ def _upsert_daily(db, account, d, typed, metrics, point_count, tz_off) -> None:
     row.calories = typed.get("calories")
     row.floors = typed.get("floors")
     row.sleep_minutes = typed.get("sleep_minutes")
+    row.hr_avg = typed.get("hr_avg")
+    row.resting_hr = typed.get("resting_hr")
+    row.hrv_ms = typed.get("hrv_ms")
     row.metrics = metrics
     row.point_count = point_count
     row.pulled_at = datetime.utcnow()
