@@ -40,14 +40,16 @@ one researcher UI.
 
 This is built in milestones (see [the implementation plan](#implementation-plan)):
 
-1. **Milestone 1 (current): Fitbit / Google Health OAuth end-to-end** — subject enrollment
-   by code → Google OAuth2 token storage → subscription registration → webhook receiver.
-   Minimal researcher UI; researcher auth deferred.
-2. **Foundation / auth** — Google-login for researchers (2FA) with an allowlist (only
-   pre-entered users, must belong to a study); RBAC: super-admin → study-admin →
-   per-permission grants (add subjects, download data).
-3. **Garmin provider** — OAuth1a + push-webhook endpoints, reusing the `garminrec` patterns.
-4. **Data review + download UI.**
+1. **Milestone 1: Fitbit / Google Health OAuth end-to-end — ✅ done.** Subject enrollment by
+   code → Google OAuth2 token storage → two-tier subscriptions → webhook ingestion → **daily
+   consolidation** (pull `dailyRollUp` + sleep stages into one row per subject per local day;
+   raw intraday points kept) with real-time, scheduled, and on-demand triggers; revocation
+   handling. Verified against the live Google Health API.
+2. **Foundation / auth — ✅ done.** Google login for researchers with a DB allowlist;
+   RBAC (superuser → study-admin → member), study-scoped access.
+3. **Data review + download — ✅ in console.** Daily + expandable intraday views, sleep stage
+   detail, JSON/CSV export. (Whole-study export still to come.)
+4. **Garmin provider (next)** — OAuth1a + push-webhook endpoints, reusing the `garminrec` patterns.
 
 ## Key endpoints (Google Health API)
 
@@ -62,13 +64,24 @@ This is built in milestones (see [the implementation plan](#implementation-plan)
 
 ## Getting started
 
-> Scaffolding is created during Milestone 1. Once present:
-
 ```bash
-cp .env.sample .env        # fill in Google client id/secret, scopes, DB creds, FERNET_KEY
-docker compose up          # MariaDB + backend
-# run DB migrations, then visit the enroll + researcher pages
+cp .env.sample .env        # Google client id/secret, scopes, DB creds, FERNET_KEY,
+                           # SUPERADMIN_EMAILS, RESEARCHER_OAUTH_REDIRECT_URI
+# put the project service-account key at secrets/health-sa.json (Tier-1 subscriber)
+podman-compose up -d       # db + backend (:8010) + scheduler + frontend (:8020)
+# migrations run automatically from the backend entrypoint
 ```
+
+Then:
+
+- **Researcher console:** `http://localhost:8020` (prod: `https://omnikog.asuscomm.com/wearable/`).
+  Sign in with a Google account listed in `SUPERADMIN_EMAILS`; add other researchers + study
+  members from the console. Add the redirect URI to the Google OAuth client first.
+- **Subject enrollment:** `http://localhost:8010/enroll` (prod: `…/enroll`) — subjects enter
+  their entry code and authorize via Google.
+
+> Note: this repo runs under **podman-compose**. After editing backend code, rebuild and do a
+> full `down`/`up` (see CLAUDE.md dev-loop notes).
 
 Required config: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_HEALTH_SCOPES`,
 `GH_PROJECT_ID`, `OAUTH_REDIRECT_URI`, `WEBHOOK_PUBLIC_URL`, `FERNET_KEY`, and DB creds.

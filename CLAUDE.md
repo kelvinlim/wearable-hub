@@ -60,9 +60,29 @@ Stack: **FastAPI + React (Vite) + MariaDB**, Docker Compose. One backend app wit
 
 ## Current status
 
-Greenfield. Milestone 1 (Fitbit OAuth2 end-to-end) not yet scaffolded. When implementing,
-follow the plan file and create: `backend/` (FastAPI), `frontend/` (Vite), `docker-compose.yml`,
-`.env.sample`, alembic migrations.
+Milestone 1 (Fitbit / Google Health OAuth end-to-end) is functionally complete, plus the
+researcher auth/RBAC foundation. Built and verified against the live API:
+
+- Subject enrollment (OAuth2 + PKCE, refresh tokens), Tier-1 project subscriber (service
+  account, `secrets/health-sa.json`), Tier-2 **AUTOMATIC** subscriptions, webhook ingestion +
+  `healthUserId` linking, revocation handling (outbound / reactive / inbound).
+- **Daily consolidation** — webhooks carry no values, so each touched subject-day is *pulled*
+  from Google: summable metrics via `dailyRollUp`, sleep via `list` + stage aggregation → one
+  `daily_health` row per subject per **local** day; raw intraday points kept in
+  `health_data_points`. Triggers: real-time (webhook → `BackgroundTasks`), scheduled
+  (`scheduler` compose service), on-demand admin endpoint.
+- **Researcher console** (`frontend/`, Vite/React) — Google login + RBAC (superuser /
+  study-admin / member); studies/subjects/members management; daily + expandable intraday
+  views; sleep stage detail; JSON/CSV export.
+
+Runs under podman-compose: `db`, `backend` (host :8010), `scheduler`, `frontend` (host :8020).
+Public via the omnikog host nginx: `…/enroll` (subjects) and `…/wearable/` (console, prefix
+stripped to :8020). See [CHANGELOG.md](CHANGELOG.md) for the feature log + verified API findings.
+Remaining: Garmin provider; whole-study export; production Restricted-scope review.
+
+**Dev-loop gotchas (podman):** code is baked into the image — after backend changes run
+`podman-compose build backend` then a full `down`/`up`; `--force-recreate` alone has stuck on a
+stale image, and podman-compose only re-reads `.env` on a full down/up.
 
 ## Prior art (symlinked, reference only — do not edit)
 

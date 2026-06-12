@@ -59,6 +59,15 @@ schema; tokens encrypted at rest. Researcher auth/RBAC and Garmin are deferred.
   with Vite `base: /wearable/` and prefixes its API calls, and the host nginx strips the prefix
   to the frontend container (so the container is unchanged). Host nginx snippet (not in repo):
   `location /wearable/ { proxy_pass http://127.0.0.1:8020/; }` (trailing slash strips the prefix).
+- **Console data views + export** — clicking a subject's daily row **expands to its intraday
+  points** (`GET /admin/subjects/{id}/daily/{day}/points`), grouped by datatype with local
+  start–end times and values; **sleep** shows its stage architecture (AWAKE/LIGHT/DEEP/REM
+  minutes — a day summary from `metrics.sleep` plus per-session breakdowns). **Export**
+  (`GET /admin/subjects/{id}/export?start=&end=`, study-view) with From/To range and three
+  formats: **JSON** (each day's summary with intraday points + sleep stages nested), **CSV
+  daily** (one row/day incl. stage-minute totals), **CSV intraday points** (one row/point). CSV
+  is generated client-side from the export JSON. Small UX: add-forms disable until an email is
+  typed; duplicate-researcher returns a clear "&lt;email&gt; is already a researcher".
 - **Daily consolidation** — one row per subject per **local** day in `daily_health` (hybrid:
   typed `steps`/`distance_m`/`calories`/`floors`/`sleep_minutes` columns + a JSON `metrics`
   blob). Since webhooks carry no values, each touched subject-day is *pulled* from Google and
@@ -131,4 +140,5 @@ schema; tokens encrypted at rest. Researcher auth/RBAC and Garmin are deferred.
 ### Deferred (later milestones)
 
 - Garmin provider (OAuth 1.0a + push webhooks).
-- Data review + download UI (CSV/JSON export of `daily_health`).
+- Whole-study export (all subjects at once); per-session sleep hypnogram view.
+- Production Restricted-scope security review (CASA) for non-test users.
