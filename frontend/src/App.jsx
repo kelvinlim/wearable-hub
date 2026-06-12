@@ -240,6 +240,18 @@ function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
   const [busy, setBusy] = useState(false);
   const [openDay, setOpenDay] = useState(null);
   const [dayPts, setDayPts] = useState([]);
+  const [exFrom, setExFrom] = useState("");
+  const [exTo, setExTo] = useState("");
+  const [exFmt, setExFmt] = useState("json");
+
+  const doExport = () =>
+    guard(async () => {
+      const data = await api.exportSubject(subject.id, exFrom || undefined, exTo || undefined);
+      const base = `${(subject.subject_label || "subject").replace(/\s+/g, "_")}-${subject.entry_code}`;
+      if (exFmt === "json") download(`${base}.json`, "application/json", JSON.stringify(data, null, 2));
+      else if (exFmt === "csv-daily") download(`${base}-daily.csv`, "text/csv", dailyCsv(data));
+      else download(`${base}-points.csv`, "text/csv", pointsCsv(data));
+    });
 
   const load = useCallback(() => guard(async () => setDaily(await api.daily(subject.id))), [guard, subject.id]);
   useEffect(() => {
@@ -265,14 +277,20 @@ function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
       <h2>
         {subject.subject_label || "Subject"} <code>{subject.entry_code}</code>{" "}
         {subject.registered ? <span className="badge ok">linked</span> : <span className="badge">not linked</span>}
-        <button
-          className="ghost small downloadbtn"
-          onClick={() => downloadJson(subject, guard)}
-          title="Download all daily + intraday data as JSON"
-        >
-          ⭳ JSON
-        </button>
       </h2>
+
+      <div className="actions export">
+        <span className="muted small">Export</span>
+        <label className="small">From <input type="date" value={exFrom} onChange={(e) => setExFrom(e.target.value)} /></label>
+        <label className="small">To <input type="date" value={exTo} onChange={(e) => setExTo(e.target.value)} /></label>
+        <select value={exFmt} onChange={(e) => setExFmt(e.target.value)}>
+          <option value="json">JSON (daily + intraday)</option>
+          <option value="csv-daily">CSV — daily</option>
+          <option value="csv-points">CSV — intraday points</option>
+        </select>
+        <button className="ghost" onClick={doExport}>Download</button>
+        <span className="muted small">(blank dates = all)</span>
+      </div>
 
       {canAdmin && (
         <div className="actions">
@@ -457,19 +475,56 @@ function fmt(v) {
   return typeof v === "number" ? Math.round(v * 10) / 10 : v;
 }
 
-function downloadJson(subject, guard) {
-  guard(async () => {
-    const data = await api.exportSubject(subject.id);
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${(subject.subject_label || "subject").replace(/\s+/g, "_")}-${subject.entry_code}.json`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-  });
+function download(filename, type, text) {
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function csvRow(vals) {
+  return vals
+    .map((v) => {
+      if (v == null) return "";
+      const s = String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    })
+    .join(",");
+}
+
+function dailyCsv(data) {
+  const head = [
+    "date", "tz_offset_seconds", "steps", "distance_m", "calories", "floors", "sleep_minutes",
+    "sleep_total_min", "sleep_asleep_min", "awake_min", "light_min", "deep_min", "rem_min", "point_count",
+  ];
+  const rows = [csvRow(head)];
+  for (const d of data.days) {
+    const sl = (d.metrics && d.metrics.sleep) || {};
+    const st = sl.stages || {};
+    rows.push(
+      csvRow([
+        d.date, d.tz_offset_seconds, d.steps, d.distance_m, d.calories, d.floors, d.sleep_minutes,
+        sl.total_min, sl.asleep_min, st.AWAKE, st.LIGHT, st.DEEP, st.REM, d.point_count,
+      ])
+    );
+  }
+  return rows.join("\n");
+}
+
+function pointsCsv(data) {
+  const head = ["date", "datatype", "start_time", "end_time", "value", "tz_offset_seconds"];
+  const rows = [csvRow(head)];
+  for (const d of data.days) {
+    for (const p of d.points || []) {
+      rows.push(csvRow([d.date, p.datatype, p.start_time, p.end_time, p.value, p.tz_offset_seconds]));
+    }
+  }
+  return rows.join("\n");
 }
 
 // UTC ISO + offset (seconds) -> local HH:MM

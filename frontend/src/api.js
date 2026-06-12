@@ -38,7 +38,13 @@ export const api = {
   daily: (subjectId) => req(`/admin/subjects/${subjectId}/daily`),
   dayPoints: (subjectId, day) =>
     req(`/admin/subjects/${subjectId}/daily/${day}/points`),
-  exportSubject: (subjectId) => req(`/admin/subjects/${subjectId}/export`),
+  exportSubject: (subjectId, start, end) => {
+    const q = new URLSearchParams();
+    if (start) q.set("start", start);
+    if (end) q.set("end", end);
+    const qs = q.toString();
+    return req(`/admin/subjects/${subjectId}/export${qs ? "?" + qs : ""}`);
+  },
   consolidate: (subjectId, start, end) =>
     req(`/admin/subjects/${subjectId}/consolidate?start=${start}&end=${end}`, {
       method: "POST",
