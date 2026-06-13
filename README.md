@@ -49,7 +49,8 @@ This is built in milestones (see [the implementation plan](#implementation-plan)
 2. **Foundation / auth — ✅ done.** Google login for researchers with a DB allowlist;
    RBAC (superuser → study-admin → member), study-scoped access.
 3. **Data review + download — ✅ in console.** Daily + expandable intraday views, sleep stage
-   detail, per-subject and whole-study JSON/CSV export.
+   detail, per-subject and whole-study JSON/CSV export. UMN-branded UI (maroon/gold, sidebar
+   nav, dark mode) modeled on the chan_cras CRMS app.
 4. **Garmin provider (next)** — OAuth1a + push-webhook endpoints, reusing the `garminrec` patterns.
 
 ## Key endpoints (Google Health API)

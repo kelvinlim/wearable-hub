@@ -59,6 +59,18 @@ schema; tokens encrypted at rest. Researcher auth/RBAC and Garmin are deferred.
   with Vite `base: /wearable/` and prefixes its API calls, and the host nginx strips the prefix
   to the frontend container (so the container is unchanged). Host nginx snippet (not in repo):
   `location /wearable/ { proxy_pass http://127.0.0.1:8020/; }` (trailing slash strips the prefix).
+- **UMN-branded redesign** — the console look & feel now follows the chan_cras CRMS app with
+  University of Minnesota branding (maroon `#7A0019` / gold `#FFCC33`). Stack: **Tailwind CSS v4**
+  (`@theme` tokens) + **lucide-react** icons; Open Sans body + Poppins headings; **class-based
+  dark mode** (header toggle, persisted). Layout: collapsible maroon **sidebar** (logo + icon nav
+  + user footer) + white/dark header (page title + study selector + dark toggle); multi-section
+  nav (Studies / Subjects / Researchers / About) driven by a `currentView` state (no router).
+  `App.jsx` split into `Layout` + `views/` + `ui.jsx`/`lib.js`; `styles.css` retired. Backend +
+  `api.js` unchanged. Plan: `docs/ui-redesign-plan.md`.
+- **Enrollment page** — the server-rendered `/enroll` is UMN-branded with participant info: a
+  header band, thank-you/intro, a "what happens next" 3-step explainer (enter code → Google
+  sign-in → approve sharing activity/sleep/heart-rate), and a voluntary-participation /
+  how-to-withdraw note; matching success/error pages.
 - **Console data views + export** — clicking a subject's daily row **expands to its intraday
   points** (`GET /admin/subjects/{id}/daily/{day}/points`), grouped by datatype with local
   start–end times and values; **sleep** shows its stage architecture (AWAKE/LIGHT/DEEP/REM

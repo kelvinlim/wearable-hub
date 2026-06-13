@@ -75,9 +75,11 @@ researcher auth/RBAC foundation. Built and verified against the live API:
   avg/min/max HR (`dailyRollUp`), resting HR + HRV (day-filtered `list`) → typed
   `hr_avg`/`resting_hr`/`hrv_ms`. Raw intraday HR is a per-study opt-in
   (`studies.ingest_intraday_hr`), downsampled to N-minute average buckets.
-- **Researcher console** (`frontend/`, Vite/React) — Google login + RBAC (superuser /
-  study-admin / member); studies/subjects/members management; daily + expandable intraday
-  views; sleep stage detail; per-subject and whole-study JSON/CSV export.
+- **Researcher console** (`frontend/`, Vite/React, **Tailwind v4 + lucide**, UMN maroon/gold +
+  dark mode) — collapsible sidebar nav (Studies / Subjects / Researchers / About); Google login +
+  RBAC (superuser / study-admin / member); studies/subjects/members management; daily + expandable
+  intraday views; sleep stage detail; per-subject and whole-study JSON/CSV export. The
+  server-rendered subject `/enroll` page is UMN-branded with participant info.
 
 Runs under podman-compose: `db`, `backend` (host :8010), `scheduler`, `frontend` (host :8020).
 Public via the omnikog host nginx: `…/enroll` (subjects) and `…/wearable/` (console, prefix
