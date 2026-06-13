@@ -133,7 +133,7 @@ function MembersCard({ studyId, guard }) {
 
   return (
     <Card className="overflow-hidden">
-      <div className="border-b border-gray-100 p-4 dark:border-neutral-800"><SectionTitle>Study members</SectionTitle></div>
+      <div className="border-b border-gray-100 p-4 dark:border-neutral-800"><SectionTitle>Research staff</SectionTitle></div>
       <table className="w-full">
         <thead className="border-b border-gray-100 dark:border-neutral-800"><tr><Th>Email</Th><Th>Role</Th><Th></Th></tr></thead>
         <tbody>
