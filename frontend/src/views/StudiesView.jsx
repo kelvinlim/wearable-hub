@@ -157,7 +157,7 @@ function MembersCard({ studyId, guard }) {
         <Select value={role} onChange={(e) => setRole(e.target.value)}><option value="member">member</option><option value="admin">admin</option></Select>
         <Button type="submit" disabled={!email.trim()}>Add / update</Button>
       </form>
-      <p className="px-4 pb-4 text-xs text-gray-400">Researchers must first be added under “Researchers” by a superuser.</p>
+      <p className="px-4 pb-4 text-xs text-gray-400">People must first be added under “Research staff” by a superuser.</p>
     </Card>
   );
 }

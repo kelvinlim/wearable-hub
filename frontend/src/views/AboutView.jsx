@@ -15,7 +15,7 @@ export default function AboutView({ me }) {
       <div className="mt-4 space-y-1 text-sm text-gray-600 dark:text-neutral-300">
         <p><span className="font-semibold text-maroon dark:text-gold">Studies</span> — create studies, manage members, opt in to intraday heart rate, export all subjects.</p>
         <p><span className="font-semibold text-maroon dark:text-gold">Subjects</span> — add subjects (entry codes), review daily + intraday data, export per subject.</p>
-        <p><span className="font-semibold text-maroon dark:text-gold">Researchers</span> — superusers manage who can sign in.</p>
+        <p><span className="font-semibold text-maroon dark:text-gold">Research staff</span> — superusers manage who can sign in.</p>
       </div>
 
       <a

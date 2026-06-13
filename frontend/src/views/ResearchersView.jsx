@@ -13,7 +13,7 @@ export default function ResearchersView({ guard }) {
 
   return (
     <Card className="max-w-2xl overflow-hidden">
-      <div className="border-b border-gray-100 p-4 dark:border-neutral-800"><SectionTitle>Researchers</SectionTitle></div>
+      <div className="border-b border-gray-100 p-4 dark:border-neutral-800"><SectionTitle>Research staff</SectionTitle></div>
       <table className="w-full">
         <thead className="border-b border-gray-100 dark:border-neutral-800"><tr><Th>Email</Th><Th>Role</Th><Th></Th></tr></thead>
         <tbody>

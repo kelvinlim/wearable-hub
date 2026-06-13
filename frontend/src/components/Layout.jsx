@@ -17,7 +17,7 @@ import { Select } from "../ui";
 const TITLES = {
   studies: "Studies",
   subjects: "Subjects",
-  researchers: "Researchers",
+  researchers: "Research staff",
   about: "About",
 };
 
@@ -38,7 +38,7 @@ export default function Layout({
   const nav = [
     { id: "studies", name: "Studies", icon: BookOpen },
     { id: "subjects", name: "Subjects", icon: Users },
-    ...(me?.is_superuser ? [{ id: "researchers", name: "Researchers", icon: ShieldCheck }] : []),
+    ...(me?.is_superuser ? [{ id: "researchers", name: "Research staff", icon: ShieldCheck }] : []),
     { id: "about", name: "About", icon: Info },
   ];
   const showStudyPicker = currentView === "studies" || currentView === "subjects";
