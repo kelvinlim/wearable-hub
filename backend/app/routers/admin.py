@@ -6,7 +6,6 @@ study's subjects + members, 'member' is read-only). Project-level ops are superu
 """
 
 import secrets
-import string
 from datetime import date, timedelta
 
 import httpx
@@ -52,8 +51,10 @@ from app.security import (
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-_CODE_ALPHABET = string.ascii_uppercase + string.digits  # unambiguous-ish, uppercase
-_CODE_LEN = 8
+# Airline record-locator style: 6 chars, uppercase. Ambiguous glyphs (I, L, O, 0, 1) are
+# excluded so subjects can't mis-key them. 31^6 ≈ 887M combinations (collisions retried below).
+_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+_CODE_LEN = 6
 
 
 def _generate_entry_code(db: Session) -> str:
