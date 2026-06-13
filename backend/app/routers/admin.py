@@ -10,7 +10,7 @@ from datetime import date, timedelta
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app import consolidation
@@ -18,7 +18,9 @@ from app.accounts import revoke_account
 from app.config import get_settings
 from app.db import get_db
 from app.models import (
+    ConsolidationState,
     DailyHealth,
+    HealthData,
     HealthDataPoint,
     ProjectSubscriber,
     ProviderAccount,
@@ -130,6 +132,31 @@ def create_subject(
     db.commit()
     db.refresh(subject)
     return subject
+
+
+@router.delete("/subjects/{subject_id}", status_code=204)
+def delete_subject(
+    subject_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> None:
+    """Delete a subject that hasn't linked a wearable yet. Study admin only. Refuses if any of
+    the subject's provider accounts is registered (revoke first). Cleans up any stray rows."""
+    subj = db.get(Subject, subject_id)
+    if subj is None:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    assert_study_admin(db, user, subj.study_id)
+
+    accounts = list(db.scalars(select(ProviderAccount).where(ProviderAccount.subject_id == subject_id)))
+    if any(a.registered for a in accounts):
+        raise HTTPException(
+            status_code=409, detail="Subject is linked — revoke their access before deleting."
+        )
+    acct_ids = [a.id for a in accounts]
+    if acct_ids:
+        for model in (Subscription, DailyHealth, HealthDataPoint, ConsolidationState, HealthData):
+            db.execute(delete(model).where(model.provider_account_id.in_(acct_ids)))
+        db.execute(delete(ProviderAccount).where(ProviderAccount.id.in_(acct_ids)))
+    db.delete(subj)
+    db.commit()
 
 
 @router.post("/subscriber", status_code=201)

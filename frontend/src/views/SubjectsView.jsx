@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { Plus } from "lucide-react";
+import { Plus, Trash2 } from "lucide-react";
 import { api } from "../api";
 import { Card, Button, Badge, Input, Th, Td, Empty } from "../ui";
 import SubjectDetail from "./SubjectDetail";
@@ -65,6 +65,7 @@ export default function SubjectsView({ studyId, canAdmin, guard }) {
                 <Th>Label</Th>
                 <Th>Status</Th>
                 <Th>Linked</Th>
+                {canAdmin && <Th />}
               </tr>
             </thead>
             <tbody>
@@ -81,10 +82,30 @@ export default function SubjectsView({ studyId, canAdmin, guard }) {
                   <Td className="font-medium">{s.subject_label || <span className="text-gray-300">—</span>}</Td>
                   <Td className="text-gray-500">{s.status}</Td>
                   <Td>{s.registered ? <Badge tone="green">linked</Badge> : <Badge>no</Badge>}</Td>
+                  {canAdmin && (
+                    <Td className="text-right" onClick={(e) => e.stopPropagation()}>
+                      {!s.registered && (
+                        <button
+                          title="Delete subject (not yet linked)"
+                          onClick={() => {
+                            if (!confirm(`Delete subject ${s.entry_code}? This can't be undone.`)) return;
+                            guard(async () => {
+                              await api.deleteSubject(s.id);
+                              if (selected?.id === s.id) setSelected(null);
+                              load();
+                            });
+                          }}
+                          className="text-gray-400 hover:text-red-600"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      )}
+                    </Td>
+                  )}
                 </tr>
               ))}
               {subjects.length === 0 && (
-                <tr><td colSpan={4}><Empty>No subjects yet.</Empty></td></tr>
+                <tr><td colSpan={canAdmin ? 5 : 4}><Empty>No subjects yet.</Empty></td></tr>
               )}
             </tbody>
           </table>
