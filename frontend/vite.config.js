@@ -1,11 +1,11 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 
-// Served under /wearable/ on the omnikog host (host nginx strips the prefix before the
-// frontend container; the SPA references assets + API under BASE_URL = "/wearable/").
-// Dev (`npm run dev`) runs at http://localhost:5173/wearable/ with the API proxied below.
+// Served under /wearable/ on the omnikog host (host nginx strips the prefix). Dev proxies the
+// API to the backend. See docs/ui-redesign-plan.md.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   base: "/wearable/",
   server: {
     proxy: {
