@@ -23,3 +23,8 @@ I imagine this as a two step process.
 8. garmin also supported see garminrec
 Question is it better to separate the garmin and fitbit oauth applications since somewhat different?
 
+9. UI similar to https://github.com/kelvinlim/chan_cras  Use UMN branding found here: https://umarcomm.umn.edu/brand The code is in the linked chan_cras
+
+10. screen shot of detail of selection of study and subjects for reference style/cras_study_screenshot.jpeg 
+
+
