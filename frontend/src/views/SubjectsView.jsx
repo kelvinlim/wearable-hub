@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Lock } from "lucide-react";
 import { api } from "../api";
 import { Card, Button, Badge, Input, Th, Td, Empty } from "../ui";
 import SubjectDetail from "./SubjectDetail";
@@ -84,7 +84,7 @@ export default function SubjectsView({ studyId, canAdmin, guard }) {
                   <Td>{s.registered ? <Badge tone="green">linked</Badge> : <Badge>no</Badge>}</Td>
                   {canAdmin && (
                     <Td className="text-right" onClick={(e) => e.stopPropagation()}>
-                      {!s.registered && (
+                      {!s.registered ? (
                         <button
                           title="Delete subject (not yet linked)"
                           onClick={() => {
@@ -99,6 +99,13 @@ export default function SubjectsView({ studyId, canAdmin, guard }) {
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>
+                      ) : (
+                        <span
+                          title="Linked — revoke this subject's access before it can be deleted"
+                          className="inline-flex cursor-help text-gray-300 dark:text-neutral-600"
+                        >
+                          <Lock className="h-4 w-4" />
+                        </span>
                       )}
                     </Td>
                   )}
