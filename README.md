@@ -43,12 +43,13 @@ This is built in milestones (see [the implementation plan](#implementation-plan)
 1. **Milestone 1: Fitbit / Google Health OAuth end-to-end — ✅ done.** Subject enrollment by
    code → Google OAuth2 token storage → two-tier subscriptions → webhook ingestion → **daily
    consolidation** (pull `dailyRollUp` + sleep stages into one row per subject per local day;
-   raw intraday points kept) with real-time, scheduled, and on-demand triggers; revocation
-   handling. Verified against the live Google Health API.
+   raw intraday points kept) with real-time, scheduled, and on-demand triggers; **heart rate +
+   HRV** (pull-only; intraday HR is a per-study opt-in, downsampled); revocation handling.
+   Verified against the live Google Health API.
 2. **Foundation / auth — ✅ done.** Google login for researchers with a DB allowlist;
    RBAC (superuser → study-admin → member), study-scoped access.
 3. **Data review + download — ✅ in console.** Daily + expandable intraday views, sleep stage
-   detail, JSON/CSV export. (Whole-study export still to come.)
+   detail, per-subject and whole-study JSON/CSV export.
 4. **Garmin provider (next)** — OAuth1a + push-webhook endpoints, reusing the `garminrec` patterns.
 
 ## Key endpoints (Google Health API)

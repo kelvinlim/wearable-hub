@@ -71,14 +71,18 @@ researcher auth/RBAC foundation. Built and verified against the live API:
   `daily_health` row per subject per **local** day; raw intraday points kept in
   `health_data_points`. Triggers: real-time (webhook → `BackgroundTasks`), scheduled
   (`scheduler` compose service), on-demand admin endpoint.
+- **Heart rate + HRV** — NOT webhook-subscribable, so pulled during consolidation: daily
+  avg/min/max HR (`dailyRollUp`), resting HR + HRV (day-filtered `list`) → typed
+  `hr_avg`/`resting_hr`/`hrv_ms`. Raw intraday HR is a per-study opt-in
+  (`studies.ingest_intraday_hr`), downsampled to N-minute average buckets.
 - **Researcher console** (`frontend/`, Vite/React) — Google login + RBAC (superuser /
   study-admin / member); studies/subjects/members management; daily + expandable intraday
-  views; sleep stage detail; JSON/CSV export.
+  views; sleep stage detail; per-subject and whole-study JSON/CSV export.
 
 Runs under podman-compose: `db`, `backend` (host :8010), `scheduler`, `frontend` (host :8020).
 Public via the omnikog host nginx: `…/enroll` (subjects) and `…/wearable/` (console, prefix
 stripped to :8020). See [CHANGELOG.md](CHANGELOG.md) for the feature log + verified API findings.
-Remaining: Garmin provider; whole-study export; production Restricted-scope review.
+Remaining: Garmin provider; production Restricted-scope review.
 
 **Dev-loop gotchas (podman):** code is baked into the image — after backend changes run
 `podman-compose build backend` then a full `down`/`up`; `--force-recreate` alone has stuck on a
