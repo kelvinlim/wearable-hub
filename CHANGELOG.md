@@ -66,8 +66,11 @@ schema; tokens encrypted at rest. Researcher auth/RBAC and Garmin are deferred.
   (`GET /admin/subjects/{id}/export?start=&end=`, study-view) with From/To range and three
   formats: **JSON** (each day's summary with intraday points + sleep stages nested), **CSV
   daily** (one row/day incl. stage-minute totals), **CSV intraday points** (one row/point). CSV
-  is generated client-side from the export JSON. Small UX: add-forms disable until an email is
-  typed; duplicate-researcher returns a clear "&lt;email&gt; is already a researcher".
+  is generated client-side from the export JSON. **Whole-study export**
+  (`GET /admin/studies/{id}/export`) does the same across every subject at once (JSON nests
+  `subjects[]`; the CSVs prefix `subject_label`/`entry_code` columns). Small UX: add-forms
+  disable until an email is typed; duplicate-researcher returns a clear "&lt;email&gt; is
+  already a researcher".
 - **Daily consolidation** — one row per subject per **local** day in `daily_health` (hybrid:
   typed `steps`/`distance_m`/`calories`/`floors`/`sleep_minutes` columns + a JSON `metrics`
   blob). Since webhooks carry no values, each touched subject-day is *pulled* from Google and
@@ -153,5 +156,5 @@ schema; tokens encrypted at rest. Researcher auth/RBAC and Garmin are deferred.
 ### Deferred (later milestones)
 
 - Garmin provider (OAuth 1.0a + push webhooks).
-- Whole-study export (all subjects at once); per-session sleep hypnogram view.
+- Per-session sleep hypnogram view; HR sparkline in the day expansion.
 - Production Restricted-scope security review (CASA) for non-test users.

@@ -481,6 +481,31 @@ def export_subject(
     assert_study_view(db, user, study_id_for_subject(db, subject_id))
     subj = db.get(Subject, subject_id)
     acct = _fitbit_account(db, subject_id)
+    payload = _subject_export_payload(db, subj, acct, start, end)
+    payload["range"] = {
+        "start": start.isoformat() if start else None,
+        "end": end.isoformat() if end else None,
+    }
+    return payload
+
+
+def _subject_export_payload(
+    db: Session, subj: Subject, acct: ProviderAccount | None, start: date | None, end: date | None
+) -> dict:
+    """{subject, days[ summary + nested intraday points ]} for one subject. Used by the subject
+    and whole-study exports. `acct` may be None (unenrolled subject) → empty days."""
+    subject = {
+        "id": subj.id,
+        "subject_label": subj.subject_label,
+        "entry_code": subj.entry_code,
+        "study_id": subj.study_id,
+        "status": subj.status,
+        "provider": acct.provider if acct else None,
+        "registered": bool(acct and acct.registered),
+        "health_user_id": acct.health_user_id if acct else None,
+    }
+    if acct is None:
+        return {"subject": subject, "days": []}
 
     dq = select(DailyHealth).where(DailyHealth.provider_account_id == acct.id)
     pq = select(HealthDataPoint).where(HealthDataPoint.provider_account_id == acct.id)
@@ -515,22 +540,38 @@ def export_subject(
         }
         for d in db.scalars(dq.order_by(DailyHealth.local_date))
     ]
+    return {"subject": subject, "days": days}
+
+
+@router.get("/studies/{study_id}/export")
+def export_study(
+    study_id: int,
+    start: date | None = None,
+    end: date | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Whole-study JSON export: every subject with their daily + intraday data. Study view."""
+    study = db.get(Study, study_id)
+    if study is None:
+        raise HTTPException(status_code=404, detail="Study not found")
+    assert_study_view(db, user, study_id)
+    subjects_out = []
+    for subj in db.scalars(select(Subject).where(Subject.study_id == study_id).order_by(Subject.id)):
+        acct = db.scalar(
+            select(ProviderAccount).where(
+                ProviderAccount.subject_id == subj.id,
+                ProviderAccount.provider == fitbit_gh.NAME,
+            )
+        )
+        subjects_out.append(_subject_export_payload(db, subj, acct, start, end))
     return {
-        "subject": {
-            "id": subj.id,
-            "subject_label": subj.subject_label,
-            "entry_code": subj.entry_code,
-            "study_id": subj.study_id,
-            "status": subj.status,
-            "provider": acct.provider,
-            "registered": acct.registered,
-            "health_user_id": acct.health_user_id,
-        },
+        "study": {"id": study.id, "name": study.name, "description": study.description},
         "range": {
             "start": start.isoformat() if start else None,
             "end": end.isoformat() if end else None,
         },
-        "days": days,
+        "subjects": subjects_out,
     }
 
 

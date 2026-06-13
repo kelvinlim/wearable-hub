@@ -124,6 +124,7 @@ function Console({ me, onLogout }) {
             <p className="muted">Select or create a study.</p>
           ) : (
             <>
+              <StudyExport study={studies.find((s) => s.id === studyId)} guard={guard} />
               {canAdmin(studyId) && (
                 <StudySettings
                   study={studies.find((s) => s.id === studyId)}
@@ -157,6 +158,43 @@ function Console({ me, onLogout }) {
         </div>
       </div>
     </div>
+  );
+}
+
+function StudyExport({ study, guard }) {
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [fmt, setFmt] = useState("json");
+  const [busy, setBusy] = useState(false);
+  if (!study) return null;
+  const run = () =>
+    guard(async () => {
+      setBusy(true);
+      try {
+        const data = await api.exportStudy(study.id, from || undefined, to || undefined);
+        const base = `study-${(study.name || "study").replace(/\s+/g, "_")}`;
+        if (fmt === "json") download(`${base}.json`, "application/json", JSON.stringify(data, null, 2));
+        else if (fmt === "csv-daily") download(`${base}-daily.csv`, "text/csv", studyDailyCsv(data));
+        else download(`${base}-points.csv`, "text/csv", studyPointsCsv(data));
+      } finally {
+        setBusy(false);
+      }
+    });
+  return (
+    <section className="panel compact-panel">
+      <div className="actions export">
+        <span className="muted small">Study export (all subjects)</span>
+        <label className="small">From <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></label>
+        <label className="small">To <input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></label>
+        <select value={fmt} onChange={(e) => setFmt(e.target.value)}>
+          <option value="json">JSON</option>
+          <option value="csv-daily">CSV — daily</option>
+          <option value="csv-points">CSV — intraday points</option>
+        </select>
+        <button className="ghost" disabled={busy} onClick={run}>{busy ? "Building…" : "Download"}</button>
+        <span className="muted small">(blank dates = all)</span>
+      </div>
+    </section>
   );
 }
 
@@ -556,6 +594,45 @@ function pointsCsv(data) {
   for (const d of data.days) {
     for (const p of d.points || []) {
       rows.push(csvRow([d.date, p.datatype, p.start_time, p.end_time, p.value, p.tz_offset_seconds]));
+    }
+  }
+  return rows.join("\n");
+}
+
+function studyDailyCsv(data) {
+  const head = [
+    "subject_label", "entry_code", "date", "tz_offset_seconds", "steps", "distance_m", "calories",
+    "floors", "sleep_minutes", "hr_avg", "resting_hr", "hrv_ms",
+    "sleep_total_min", "sleep_asleep_min", "awake_min", "light_min", "deep_min", "rem_min", "point_count",
+  ];
+  const rows = [csvRow(head)];
+  for (const s of data.subjects || []) {
+    for (const d of s.days) {
+      const sl = (d.metrics && d.metrics.sleep) || {};
+      const st = sl.stages || {};
+      rows.push(
+        csvRow([
+          s.subject.subject_label, s.subject.entry_code, d.date, d.tz_offset_seconds, d.steps,
+          d.distance_m, d.calories, d.floors, d.sleep_minutes, d.hr_avg, d.resting_hr, d.hrv_ms,
+          sl.total_min, sl.asleep_min, st.AWAKE, st.LIGHT, st.DEEP, st.REM, d.point_count,
+        ])
+      );
+    }
+  }
+  return rows.join("\n");
+}
+
+function studyPointsCsv(data) {
+  const head = ["subject_label", "entry_code", "date", "datatype", "start_time", "end_time", "value", "tz_offset_seconds"];
+  const rows = [csvRow(head)];
+  for (const s of data.subjects || []) {
+    for (const d of s.days) {
+      for (const p of d.points || []) {
+        rows.push(csvRow([
+          s.subject.subject_label, s.subject.entry_code, d.date, p.datatype, p.start_time,
+          p.end_time, p.value, p.tz_offset_seconds,
+        ]));
+      }
     }
   }
   return rows.join("\n");

@@ -47,6 +47,13 @@ export const api = {
     const qs = q.toString();
     return req(`/admin/subjects/${subjectId}/export${qs ? "?" + qs : ""}`);
   },
+  exportStudy: (studyId, start, end) => {
+    const q = new URLSearchParams();
+    if (start) q.set("start", start);
+    if (end) q.set("end", end);
+    const qs = q.toString();
+    return req(`/admin/studies/${studyId}/export${qs ? "?" + qs : ""}`);
+  },
   consolidate: (subjectId, start, end) =>
     req(`/admin/subjects/${subjectId}/consolidate?start=${start}&end=${end}`, {
       method: "POST",
