@@ -20,7 +20,14 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
 
   const load = useCallback(() => guard(async () => setDaily(await api.daily(subject.id))), [guard, subject.id]);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { setOpenDay(null); setDayPts([]); }, [subject.id]);
+  // Reset per-subject UI state when the selection changes (the component instance is reused),
+  // re-seeding the consolidate range from the subject's collection window (or today).
+  useEffect(() => {
+    setOpenDay(null);
+    setDayPts([]);
+    setStart(subject.collection_start || today());
+    setEnd(subject.collection_end || today());
+  }, [subject.id, subject.collection_start, subject.collection_end]);
 
   const toggleDay = (date) =>
     guard(async () => {
@@ -75,11 +82,20 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
             <span className="text-gray-400">→</span>
             <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800" />
             <Button
-              disabled={busy}
-              onClick={() => guard(async () => { setBusy(true); try { await api.consolidate(subject.id, start, end); await load(); } finally { setBusy(false); } })}
+              disabled={busy || !start || !end}
+              title={!start || !end ? "Pick both a start and end date" : undefined}
+              onClick={() =>
+                guard(async () => {
+                  if (!start || !end) throw new Error("Pick both a start and end date to pull.");
+                  if (end < start) throw new Error("End date must be on or after the start date.");
+                  setBusy(true);
+                  try { await api.consolidate(subject.id, start, end); await load(); } finally { setBusy(false); }
+                })
+              }
             >
               {busy ? "Pulling…" : "Pull + consolidate"}
             </Button>
+            <span className="text-xs text-gray-400">(both required)</span>
             <Button
               variant="danger"
               onClick={() => { if (confirm("Revoke this subject's wearable authorization?")) guard(async () => { await api.revoke(subject.id); onChanged(); }); }}
