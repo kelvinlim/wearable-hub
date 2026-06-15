@@ -37,6 +37,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  updateSubject: (subjectId, body) =>
+    req(`/admin/subjects/${subjectId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
   deleteSubject: (subjectId) => req(`/admin/subjects/${subjectId}`, { method: "DELETE" }),
   daily: (subjectId) => req(`/admin/subjects/${subjectId}/daily`),
   dayPoints: (subjectId, day) =>

@@ -83,9 +83,17 @@ class Subject(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     study_id: Mapped[int] = mapped_column(ForeignKey("studies.id"), nullable=False)
+    # `subject_label` is the participant's Google/Fitbit account label; `participant_id` is the
+    # study's own subject identifier (shown as "Study ID" in the console).
     subject_label: Mapped[str | None] = mapped_column(String(255))
+    participant_id: Mapped[str | None] = mapped_column(String(255))
     entry_code: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
+    # Optional inclusive data-collection window (subject-local days). When set, pulls are
+    # clamped to it across every trigger (real-time webhook, nightly safety-net, on-demand).
+    # Either bound may be null = unbounded on that side.
+    collection_start: Mapped[date | None] = mapped_column(Date)
+    collection_end: Mapped[date | None] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     study: Mapped["Study"] = relationship(back_populates="subjects")

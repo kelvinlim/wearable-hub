@@ -1,6 +1,6 @@
 """Pydantic request/response models for the admin and enroll APIs."""
 
-from datetime import datetime
+from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict
 
@@ -30,6 +30,19 @@ class StudyUpdate(BaseModel):
 
 class SubjectCreate(BaseModel):
     subject_label: str | None = None
+    participant_id: str | None = None
+    collection_start: date | None = None
+    collection_end: date | None = None
+
+
+class SubjectUpdate(BaseModel):
+    """PATCH body for a subject. Only fields explicitly present are applied (a present field
+    set to null clears that column), so the window bounds can be set, changed, or cleared."""
+
+    subject_label: str | None = None
+    participant_id: str | None = None
+    collection_start: date | None = None
+    collection_end: date | None = None
 
 
 class SubjectOut(BaseModel):
@@ -38,8 +51,11 @@ class SubjectOut(BaseModel):
     id: int
     study_id: int
     subject_label: str | None
+    participant_id: str | None = None
     entry_code: str
     status: str
+    collection_start: date | None = None
+    collection_end: date | None = None
     created_at: datetime | None
 
 

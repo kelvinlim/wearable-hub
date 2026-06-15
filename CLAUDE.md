@@ -80,6 +80,12 @@ researcher auth/RBAC foundation. Built and verified against the live API:
   RBAC (superuser / study-admin / member); studies/subjects/members management; daily + expandable
   intraday views; sleep stage detail; per-subject and whole-study JSON/CSV export. The
   server-rendered subject `/enroll` page is UMN-branded with participant info.
+- **Subject data-collection window** — each subject has an editable `participant_id` ("Study ID",
+  distinct from the `study_id` FK) and an optional inclusive `collection_start`/`collection_end`
+  (subject-local days, either bound nullable). When set, pulls are **hard-clamped** to it — enforced
+  once in `consolidate_day()` so all triggers (webhook / nightly / on-demand) skip out-of-window
+  days before any Google call. Edit via the console Subjects-table pencil button (`PATCH
+  /admin/subjects/{id}`).
 
 Runs under podman-compose: `db`, `backend` (host :8010), `scheduler`, `frontend` (host :8020).
 Public via the omnikog host nginx: `…/enroll` (subjects) and `…/wearable/` (console, prefix

@@ -11,8 +11,8 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
   const [daily, setDaily] = useState([]);
   const [openDay, setOpenDay] = useState(null);
   const [dayPts, setDayPts] = useState([]);
-  const [start, setStart] = useState(today());
-  const [end, setEnd] = useState(today());
+  const [start, setStart] = useState(subject.collection_start || today());
+  const [end, setEnd] = useState(subject.collection_end || today());
   const [busy, setBusy] = useState(false);
   const [exFrom, setExFrom] = useState("");
   const [exTo, setExTo] = useState("");
@@ -43,9 +43,14 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
   return (
     <Card className="overflow-hidden">
       <div className="flex flex-wrap items-center gap-3 border-b border-gray-100 p-4 dark:border-neutral-800">
-        <SectionTitle>{subject.subject_label || "Subject"}</SectionTitle>
+        <SectionTitle>{subject.participant_id || subject.subject_label || "Subject"}</SectionTitle>
         <code className="rounded bg-gray-100 px-1.5 py-0.5 text-xs dark:bg-neutral-800">{subject.entry_code}</code>
         {subject.registered ? <Badge tone="green">linked</Badge> : <Badge>not linked</Badge>}
+        {(subject.collection_start || subject.collection_end) && (
+          <Badge tone="gold">
+            collect {subject.collection_start || "…"} → {subject.collection_end || "…"}
+          </Badge>
+        )}
       </div>
 
       {/* Export + admin actions */}

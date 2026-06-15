@@ -40,6 +40,7 @@ from app.schemas import (
     SubjectCreate,
     SubjectOut,
     SubjectStatusOut,
+    SubjectUpdate,
     UserCreate,
     UserOut,
 )
@@ -122,16 +123,47 @@ def create_subject(
     if db.get(Study, study_id) is None:
         raise HTTPException(status_code=404, detail="Study not found")
     assert_study_admin(db, user, study_id)
+    if payload.collection_end and payload.collection_start and payload.collection_end < payload.collection_start:
+        raise HTTPException(status_code=400, detail="collection_end must be >= collection_start")
     subject = Subject(
         study_id=study_id,
         subject_label=payload.subject_label,
+        participant_id=payload.participant_id,
         entry_code=_generate_entry_code(db),
         status="pending",
+        collection_start=payload.collection_start,
+        collection_end=payload.collection_end,
     )
     db.add(subject)
     db.commit()
     db.refresh(subject)
     return subject
+
+
+@router.patch("/subjects/{subject_id}", response_model=SubjectOut)
+def update_subject(
+    subject_id: int,
+    payload: SubjectUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> Subject:
+    """Edit a subject's label, Study ID, and optional data-collection window. Study admin only.
+    Only fields present in the body are applied (a present null clears that field)."""
+    subj = db.get(Subject, subject_id)
+    if subj is None:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    assert_study_admin(db, user, subj.study_id)
+
+    fields = payload.model_dump(exclude_unset=True)
+    for key, value in fields.items():
+        setattr(subj, key, value)
+    # Validate the resulting window (whichever bound was just changed).
+    if subj.collection_start and subj.collection_end and subj.collection_end < subj.collection_start:
+        raise HTTPException(status_code=400, detail="collection_end must be >= collection_start")
+
+    db.commit()
+    db.refresh(subj)
+    return subj
 
 
 @router.delete("/subjects/{subject_id}", status_code=204)

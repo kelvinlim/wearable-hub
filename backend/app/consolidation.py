@@ -427,9 +427,31 @@ def _get_or_create_state(db: Session, account_id: int, d: date) -> Consolidation
     return row
 
 
+def _outside_collection_window(subject, d: date) -> bool:
+    """True if `d` falls outside the subject's optional [collection_start, collection_end]
+    (inclusive, subject-local days). Either bound may be None = unbounded on that side."""
+    if subject is None:
+        return False
+    if subject.collection_start and d < subject.collection_start:
+        return True
+    if subject.collection_end and d > subject.collection_end:
+        return True
+    return False
+
+
 def consolidate_day(db: Session, account: ProviderAccount, d: date) -> ConsolidationState:
-    """Pull + aggregate one subject-day into `daily_health` (+ raw points). Idempotent."""
+    """Pull + aggregate one subject-day into `daily_health` (+ raw points). Idempotent.
+
+    Days outside the subject's data-collection window are skipped (no API pull) so the window
+    is enforced uniformly across every trigger that routes through here (real-time webhook,
+    nightly safety-net, on-demand backfill)."""
     state = _get_or_create_state(db, account.id, d)
+    if _outside_collection_window(account.subject, d):
+        state.status, state.detail, state.completed_at = (
+            "skipped", "outside collection window", datetime.utcnow()
+        )
+        db.commit()
+        return state
     try:
         token = _fresh_token(db, account)
     except fitbit_gh.GrantRevokedError as exc:

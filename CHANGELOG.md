@@ -83,6 +83,21 @@ schema; tokens encrypted at rest. Researcher auth/RBAC and Garmin are deferred.
   `subjects[]`; the CSVs prefix `subject_label`/`entry_code` columns). Small UX: add-forms
   disable until an email is typed; duplicate-researcher returns a clear "&lt;email&gt; is
   already a researcher".
+- **Subject edit + data-collection window** — subjects gain an editable **Study ID**
+  (`subjects.participant_id`, distinct from the `study_id` FK; `subject_label` is the
+  participant's Google/Fitbit account) and an optional inclusive **collection window**
+  (`collection_start`/`collection_end`, subject-local days; either bound nullable =
+  unbounded). New `PATCH /admin/subjects/{id}` (study-admin; `exclude_unset` so a present-null
+  clears a field, validates end ≥ start); `SubjectCreate`/`SubjectOut` carry the new fields.
+  The window **hard-clamps every pull path** — enforced once at the `consolidate_day()` choke
+  point, so real-time webhook, nightly safety-net, and on-demand backfill all skip
+  out-of-window days (`consolidation_state.status = "skipped"`) **before** any token refresh
+  or Google API call. Console: a per-row **Edit** button (pencil, next to delete/lock; works
+  on linked subjects too) opens a modal (Study ID, label, start→end with live end ≥ start
+  check); Subjects table gains Study ID + Collection-window columns; SubjectDetail shows the
+  window as a header badge and pre-fills the Pull + consolidate pickers to it. Saving the
+  window stores bounds only — backfill still runs via the manual pull or the nightly job.
+  Migration `0008`.
 - **Daily consolidation** — one row per subject per **local** day in `daily_health` (hybrid:
   typed `steps`/`distance_m`/`calories`/`floors`/`sleep_minutes` columns + a JSON `metrics`
   blob). Since webhooks carry no values, each touched subject-day is *pulled* from Google and
