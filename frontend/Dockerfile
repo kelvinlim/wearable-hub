@@ -2,8 +2,11 @@
 # backend API so the SPA stays same-origin — no CORS).
 FROM node:20-alpine AS build
 WORKDIR /app
-COPY package.json ./
-RUN npm install
+# `npm ci` installs from the committed lockfile, so every image build is reproducible.
+# (A flaky `npm install` once dropped `scheduler` — react-dom's runtime dep — and Rollup
+# silently shipped a bare `import "scheduler"`, breaking the app in the browser.)
+COPY package.json package-lock.json ./
+RUN npm ci
 COPY . .
 RUN npm run build
 

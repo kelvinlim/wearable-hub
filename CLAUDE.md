@@ -94,7 +94,11 @@ Remaining: Garmin provider; production Restricted-scope review.
 
 **Dev-loop gotchas (podman):** code is baked into the image — after backend changes run
 `podman-compose build backend` then a full `down`/`up`; `--force-recreate` alone has stuck on a
-stale image, and podman-compose only re-reads `.env` on a full down/up.
+stale image, and podman-compose only re-reads `.env` on a full down/up. The frontend Dockerfile
+uses `npm ci` against a committed `package-lock.json` so image builds are reproducible — a flaky
+`npm install` once dropped `scheduler` (react-dom's runtime dep) and Rollup silently shipped a
+bare `import "scheduler"`, which fails to resolve in the browser. If you see that error, rebuild
+the frontend image with `--no-cache`.
 
 ## Prior art (symlinked, reference only — do not edit)
 

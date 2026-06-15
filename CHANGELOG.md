@@ -130,6 +130,14 @@ schema; tokens encrypted at rest. Researcher auth/RBAC and Garmin are deferred.
   without retrying a dead token; (3) **inbound** — a best-effort deregistration-webhook hook
   (shape unverified; logs loudly to capture the real payload). Revocation is idempotent.
 
+### Fixed
+
+- **Frontend `Failed to resolve module specifier "scheduler"`** — a flaky `npm install` in the
+  frontend image build dropped `scheduler` (react-dom's runtime dep); Rollup leaves an
+  unresolvable bare import external (warns, doesn't fail), so the shipped bundle carried a bare
+  `import "scheduler"` that the browser can't resolve. Pinned the build with a committed
+  `package-lock.json` + `npm ci` (`frontend/Dockerfile`) so image builds are reproducible.
+
 ### Verified against the live Google Health API (2026-06-11)
 
 - Subscriber path uses the project **NUMBER**, not the ID; `subscriberId` is a query param.
