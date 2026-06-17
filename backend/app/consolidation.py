@@ -385,6 +385,12 @@ def _upsert_point(db: Session, account_id: int, datatype: str, d: date, dp: dict
     if row is None:
         row = HealthDataPoint(provider_account_id=account_id, datatype=datatype, point_key=point_key)
         db.add(row)
+        # Session is autoflush=False, so the SELECT above can't see rows added earlier in this
+        # same run. Flush now so a later duplicate point_key in the same pull (Google can return
+        # overlapping dataPoints across pages, or two name-less points sharing a start minute)
+        # finds this row and updates it instead of adding a second, which would violate
+        # uq_hdp_acct_dt_key at commit.
+        db.flush()
     row.local_date = d
     row.start_time = start
     row.end_time = end
@@ -405,6 +411,7 @@ def _upsert_hr_bucket(db: Session, account_id: int, d: date, bkt: dict, offset: 
     if row is None:
         row = HealthDataPoint(provider_account_id=account_id, datatype="heart_rate", point_key=point_key)
         db.add(row)
+        db.flush()  # see _upsert_point: flush so same-run duplicate buckets update, not re-add
     row.local_date = d
     row.start_time = bkt["start"]
     row.end_time = bkt["end"]

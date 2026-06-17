@@ -45,6 +45,12 @@ Stack: **FastAPI + React (Vite) + MariaDB**, Docker Compose. One backend app wit
 - Store the full raw token response (`raw_token_json`) alongside the denormalized
   `access_token`/`refresh_token`/`token_expires_at` columns.
 - Always refresh Fitbit tokens before a data read if near expiry.
+- **Point upserts must `db.flush()` after `db.add()`.** `SessionLocal` is `autoflush=False`, so
+  a find-or-create `SELECT` can't see rows added earlier in the same run. Consolidation pulls can
+  yield two dataPoints with the same `(provider_account_id, datatype, point_key)` (name-less
+  points sharing a start minute; overlapping pages) — without an immediate flush both get added
+  and `uq_hdp_acct_dt_key` fails at `commit()` (a 500 on the consolidate path). See
+  `_upsert_point` / `_upsert_hr_bucket` in `consolidation.py`.
 
 ## Google Health API reference
 

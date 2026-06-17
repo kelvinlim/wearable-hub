@@ -54,6 +54,21 @@ milestone progress rather than released versions.
   bite again — the proper fix at that point is converting the endpoint to FastAPI
   `BackgroundTasks` + a job-status endpoint and polling from the console.
 
+### Fixes
+
+- **Consolidation 500 on duplicate intraday `point_key` (within a single pull).** On-demand
+  Pull / consolidation returned a 500 (`IntegrityError 1062 … uq_hdp_acct_dt_key`) when a
+  day's pulled dataPoints contained two points that collapse to the same
+  `(provider_account_id, datatype, point_key)` — e.g. two `name`-less step points sharing a
+  start minute (`steps|2026-06-01T23:26:00`), or overlapping points returned across pages by
+  the unfiltered newest-first list path. The `SessionLocal` is `autoflush=False`, so the
+  find-or-create `SELECT` in `_upsert_point` / `_upsert_hr_bucket` couldn't see rows
+  `db.add()`-ed earlier in the *same* run; the second occurrence was added as a new row and
+  the unique constraint failed at `commit()`. (Cross-run re-pulls were always fine — committed
+  rows are visible.) Fix: `db.flush()` immediately after adding a new point row so a later
+  same-run duplicate finds it and updates instead of re-inserting. Consolidation is now truly
+  idempotent within a run, not just across runs.
+
 ## [Unreleased] — Milestone 1: Fitbit-via-Google-Health OAuth end-to-end
 
 The first vertical slice: register research subjects' Fitbit data against the new
