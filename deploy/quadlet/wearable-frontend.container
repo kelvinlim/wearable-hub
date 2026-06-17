@@ -1,0 +1,24 @@
+# wearable-hub frontend (Vite/React build served by nginx) — Quadlet container unit.
+# Build: sudo podman build -t localhost/wearable-frontend:latest /home/kolim/Projects/wearable-hub/frontend
+# The container's internal nginx proxies /admin /auth /enroll /webhooks /health to backend:8000
+# over the wearable.network (the NetworkAlias on wearable-backend makes "backend" resolve).
+# Install: copy to /etc/containers/systemd/, then `sudo systemctl daemon-reload && sudo systemctl start wearable-frontend.service`
+
+[Unit]
+Description=wearable-hub frontend (Vite/nginx on host :8020 -> container :80)
+Wants=network-online.target
+After=network-online.target
+Requires=wearable-network.service
+After=wearable-network.service wearable-backend.service
+
+[Container]
+ContainerName=wearable-frontend
+Image=localhost/wearable-frontend:latest
+PublishPort=8020:80
+Network=wearable.network
+
+[Service]
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target default.target

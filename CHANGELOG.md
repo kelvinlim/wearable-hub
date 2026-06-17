@@ -4,6 +4,56 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
+## [Unreleased]
+
+### Infrastructure
+
+- **Host + DB migration:** moved from `omnikog.asuscomm.com` to `lnpitask.umn.edu` and
+  switched from the bundled `mariadb:11` compose service to an external MariaDB at
+  `cnc3.med.umn.edu`. The `db` service + `db_data` volume are gone from `docker-compose.yml`;
+  backend/scheduler get `DATABASE_URL` from `.env` only. `entrypoint.sh`'s wait-for-db loop
+  now targets `DB_WAIT_HOST`/`DB_WAIT_PORT` (set in `.env`). Host nginx on lnpitask gained
+  three locations under the existing TLS server block: `/wearable/` → frontend:8020
+  (prefix stripped), `/enroll` → backend:8010, `/webhooks/google-health` → backend:8010.
+  Public redirect URIs (`OAUTH_REDIRECT_URI`, `WEBHOOK_PUBLIC_URL`,
+  `RESEARCHER_OAUTH_REDIRECT_URI`) updated; Google Cloud Console redirect URIs and the
+  Tier-1 webhook subscriber were re-registered against the new host. Started fresh on cnc3
+  (no data migrated from the old container).
+- **Prod runtime is Podman Quadlets, not compose.** `lnpitask` doesn't ship
+  `podman-compose`; the three services now run as systemd quadlet units
+  (`wearable.network`, `wearable-backend.container`, `wearable-scheduler.container`,
+  `wearable-frontend.container`) checked in at `deploy/quadlet/` and installed to
+  `/etc/containers/systemd/`. Backend takes `NetworkAlias=backend` so the frontend's
+  internal nginx `proxy_pass http://backend:8000` resolves unchanged. Auto-start on boot,
+  `systemctl restart wearable-backend.service` for restarts, `journalctl -u …` for logs.
+  `docker-compose.yml` is kept for local dev only.
+- **Outbound HTTP egress through corporate proxy.** lnpitask sits behind
+  `http://ctsigate.ahc.umn.edu:3128`; without `HTTPS_PROXY`/`HTTP_PROXY` the backend's
+  httpx + google-auth calls to `oauth2.googleapis.com` and `health.googleapis.com` fail
+  with `[Errno 101] Network is unreachable` (broke researcher OAuth callback with a 500
+  on first attempt). Added `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` (`.med.umn.edu`,
+  `.ahc.umn.edu`, cnc3, loopback) to `.env`; the quadlet's `EnvironmentFile=` passes them
+  through to the container as a `--env-file`. Also affects `podman build` itself — `sudo`
+  strips proxy env, so image builds need `sudo -E podman build`.
+- **Frontend nginx re-resolves `backend` per request.** With nginx's default behavior of
+  resolving `proxy_pass` hostnames once at config-parse time, any backend container
+  restart (which assigns a new IP on the user-defined network) caused permanent 502s on
+  the SPA until the frontend was bounced too. Fixed by adding `resolver <ns> valid=10s`
+  and a variable in `proxy_pass`; the nameserver IP is read from `/etc/resolv.conf` at
+  container start by `frontend/30-set-resolver.sh` (runs from `/docker-entrypoint.d/`).
+  Verified: bouncing the backend now auto-recovers in ~3s without touching the frontend.
+- **nginx proxy timeouts bumped to 300s on the consolidate path.** On-demand
+  `POST /admin/subjects/{id}/consolidate` is synchronous and iterates day-by-day through
+  Google Health API calls; for a multi-week range through the corp proxy this easily
+  exceeds nginx's default 60s `proxy_read_timeout` and returns 504 even while the backend
+  is still successfully completing the work. Added `proxy_connect_timeout 10s`,
+  `proxy_send_timeout 300s`, `proxy_read_timeout 300s` to both `/wearable/` on the host
+  nginx and `/admin/` in `frontend/nginx.conf`. **Future-proofing note:** 300s covers the
+  current 120-day range cap (`backend/app/routers/admin.py`) at reasonable Google +
+  proxy latency. If the cap goes up or upstream latency increases, this ceiling will
+  bite again — the proper fix at that point is converting the endpoint to FastAPI
+  `BackgroundTasks` + a job-status endpoint and polling from the console.
+
 ## [Unreleased] — Milestone 1: Fitbit-via-Google-Health OAuth end-to-end
 
 The first vertical slice: register research subjects' Fitbit data against the new
@@ -55,7 +105,7 @@ schema; tokens encrypted at rest. Researcher auth/RBAC and Garmin are deferred.
   nginx (`frontend` compose service, host `:8020`) which also reverse-proxies `/admin`,
   `/enroll`, `/webhooks` to the backend — same-origin, no CORS, no backend changes. The subject
   enrollment flow stays the server-rendered `/enroll` (OAuth-coupled), linked from the console.
-  **Public deployment:** served at `https://omnikog.asuscomm.com/wearable/` — the SPA is built
+  **Public deployment:** served at `https://lnpitask.umn.edu/wearable/` — the SPA is built
   with Vite `base: /wearable/` and prefixes its API calls, and the host nginx strips the prefix
   to the frontend container (so the container is unchanged). Host nginx snippet (not in repo):
   `location /wearable/ { proxy_pass http://127.0.0.1:8020/; }` (trailing slash strips the prefix).

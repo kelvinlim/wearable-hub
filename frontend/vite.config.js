@@ -2,8 +2,8 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
-// Served under /wearable/ on the omnikog host (host nginx strips the prefix). Dev proxies the
-// API to the backend. See docs/ui-redesign-plan.md.
+// Served under /wearable/ on the lnpitask.umn.edu host (host nginx strips the prefix). Dev
+// proxies the API to the backend. See docs/ui-redesign-plan.md.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   base: "/wearable/",

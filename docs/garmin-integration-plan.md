@@ -121,7 +121,7 @@ Everything else → raw `health_data` + `metrics` passthrough.
 ## Prerequisites / open items
 
 - Garmin Health API program approval + consumer key/secret; register the `{datatype}` webhook URLs
-  (e.g. `https://omnikog.asuscomm.com/webhooks/garmin/dailies`, …) and the OAuth callback in the
+  (e.g. `https://lnpitask.umn.edu/webhooks/garmin/dailies`, …) and the OAuth callback in the
   Garmin developer portal.
 - Confirm exact Garmin Health endpoint paths + the `user/id`, `backfill`, and `user/registration`
   routes against current Garmin docs (the legacy app used `connectapi.garmin.com` for OAuth only).

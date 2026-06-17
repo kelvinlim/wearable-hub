@@ -87,15 +87,28 @@ researcher auth/RBAC foundation. Built and verified against the live API:
   days before any Google call. Edit via the console Subjects-table pencil button (`PATCH
   /admin/subjects/{id}`).
 
-Runs under podman-compose: `db`, `backend` (host :8010), `scheduler`, `frontend` (host :8020).
-Public via the omnikog host nginx: `…/enroll` (subjects) and `…/wearable/` (console, prefix
-stripped to :8020). See [CHANGELOG.md](CHANGELOG.md) for the feature log + verified API findings.
-Remaining: Garmin provider; production Restricted-scope review.
+**Runtime:** `backend` (host :8010), `scheduler`, `frontend` (host :8020). DB is an external
+MariaDB at `cnc3.med.umn.edu`. Public via the lnpitask.umn.edu host nginx: `…/enroll`
+(subjects), `…/webhooks/google-health` (Google callbacks), and `…/wearable/` (console, prefix
+stripped to :8020). See [CHANGELOG.md](CHANGELOG.md) for the feature log + verified API
+findings. Remaining: Garmin provider; production Restricted-scope review.
+
+**Prod on lnpitask runs under Podman Quadlets**, not compose. Sources are checked in at
+[deploy/quadlet/](deploy/quadlet/) and installed to `/etc/containers/systemd/`
+(`wearable.network`, `wearable-backend.container`, `wearable-scheduler.container`,
+`wearable-frontend.container`). The three containers share `wearable.network`; the backend
+takes `NetworkAlias=backend` so the frontend's internal nginx (`proxy_pass http://backend:8000`)
+resolves unchanged. Local dev still uses `docker-compose.yml`.
 
 **Dev-loop gotchas (podman):** code is baked into the image — after backend changes run
-`podman-compose build backend` then a full `down`/`up`; `--force-recreate` alone has stuck on a
-stale image, and podman-compose only re-reads `.env` on a full down/up. The frontend Dockerfile
-uses `npm ci` against a committed `package-lock.json` so image builds are reproducible — a flaky
+`podman build -t localhost/wearable-backend:latest ./backend` then
+`sudo systemctl restart wearable-backend.service` (prod) or a full `down`/`up` (compose).
+On lnpitask, `sudo` strips proxy env vars; use `sudo -E podman build` to inherit
+`http_proxy`/`https_proxy` for the base-image pull. The frontend container re-resolves
+`backend` per request (resolver IP templated from `/etc/resolv.conf` at start by
+`frontend/30-set-resolver.sh`), so a backend restart auto-recovers without bouncing the
+frontend. The frontend Dockerfile uses `npm ci`
+against a committed `package-lock.json` so image builds are reproducible — a flaky
 `npm install` once dropped `scheduler` (react-dom's runtime dep) and Rollup silently shipped a
 bare `import "scheduler"`, which fails to resolve in the browser. If you see that error, rebuild
 the frontend image with `--no-cache`.

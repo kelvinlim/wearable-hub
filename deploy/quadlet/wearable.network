@@ -1,0 +1,11 @@
+# Quadlet network for the wearable-hub stack.
+# Quadlet translates this to `wearable-network.service`; podman creates the
+# underlying network as `systemd-wearable`. Containers attach via `Network=wearable.network`.
+
+[Unit]
+Description=Network for wearable-hub containers
+
+[Network]
+
+[Install]
+WantedBy=multi-user.target default.target

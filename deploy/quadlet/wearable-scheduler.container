@@ -1,0 +1,25 @@
+# wearable-hub scheduler (daily-consolidation backstop) — Quadlet container unit.
+# Same image as the backend; just overrides the entrypoint command to run the scheduler.
+# Install: copy to /etc/containers/systemd/, then `sudo systemctl daemon-reload && sudo systemctl start wearable-scheduler.service`
+
+[Unit]
+Description=wearable-hub scheduler (nightly + drain consolidation)
+Wants=network-online.target
+After=network-online.target
+Requires=wearable-network.service
+After=wearable-network.service wearable-backend.service
+
+[Container]
+ContainerName=wearable-scheduler
+Image=localhost/wearable-backend:latest
+EnvironmentFile=/home/kolim/Projects/wearable-hub/.env
+# Override the image CMD (which is /entrypoint.sh) to start the scheduler loop directly.
+# The scheduler doesn't run migrations or wait for the DB — the backend container owns that.
+Exec=python -m app.scheduler
+Network=wearable.network
+
+[Service]
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target default.target

@@ -67,16 +67,30 @@ This is built in milestones (see [the implementation plan](#implementation-plan)
 ## Getting started
 
 ```bash
-cp .env.sample .env        # Google client id/secret, scopes, DB creds, FERNET_KEY,
-                           # SUPERADMIN_EMAILS, RESEARCHER_OAUTH_REDIRECT_URI
+cp .env.sample .env        # Google client id/secret, scopes, DB creds (external MariaDB at
+                           # cnc3.med.umn.edu), FERNET_KEY, SUPERADMIN_EMAILS,
+                           # RESEARCHER_OAUTH_REDIRECT_URI
 # put the project service-account key at secrets/health-sa.json (Tier-1 subscriber)
-podman-compose up -d       # db + backend (:8010) + scheduler + frontend (:8020)
-# migrations run automatically from the backend entrypoint
+podman-compose up -d       # backend (:8010) + scheduler + frontend (:8020)
+# migrations run automatically from the backend entrypoint against the external DB
 ```
+
+**Production (lnpitask.umn.edu)** runs the same images under Podman **Quadlets** (native
+systemd integration, auto-restart on boot) — not compose. After editing code:
+
+```bash
+sudo -E podman build -t localhost/wearable-backend:latest ./backend
+sudo -E podman build -t localhost/wearable-frontend:latest ./frontend
+sudo systemctl restart wearable-backend.service wearable-scheduler.service wearable-frontend.service
+```
+
+Quadlet sources: [deploy/quadlet/](deploy/quadlet/) (installed to `/etc/containers/systemd/`).
+Logs: `sudo journalctl -u wearable-backend.service -f`. The `docker-compose.yml` is kept for
+local development only.
 
 Then:
 
-- **Researcher console:** `http://localhost:8020` (prod: `https://omnikog.asuscomm.com/wearable/`).
+- **Researcher console:** `http://localhost:8020` (prod: `https://lnpitask.umn.edu/wearable/`).
   Sign in with a Google account listed in `SUPERADMIN_EMAILS`; add other researchers + study
   members from the console. Add the redirect URI to the Google OAuth client first.
 - **Subject enrollment:** `http://localhost:8010/enroll` (prod: `…/enroll`) — subjects enter

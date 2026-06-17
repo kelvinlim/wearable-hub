@@ -1,0 +1,30 @@
+# wearable-hub backend (FastAPI) — Quadlet container unit.
+# Build: sudo podman build -t localhost/wearable-backend:latest /home/kolim/Projects/wearable-hub/backend
+# Install: copy to /etc/containers/systemd/, then `sudo systemctl daemon-reload && sudo systemctl start wearable-backend.service`
+# Logs: `sudo journalctl -u wearable-backend.service -f`
+
+[Unit]
+Description=wearable-hub backend (FastAPI on host :8010 -> container :8000)
+Wants=network-online.target
+After=network-online.target
+Requires=wearable-network.service
+After=wearable-network.service
+
+[Container]
+ContainerName=wearable-backend
+Image=localhost/wearable-backend:latest
+EnvironmentFile=/home/kolim/Projects/wearable-hub/.env
+PublishPort=8010:8000
+# Service-account key for Tier-1 subscriber registration (mount the host dir read-only).
+# Drop /home/kolim/Projects/wearable-hub/secrets/health-sa.json in before POST /admin/subscriber.
+Volume=/home/kolim/Projects/wearable-hub/secrets:/secrets:ro,z
+Network=wearable.network
+# DNS alias so the frontend container's nginx (proxy_pass http://backend:8000) resolves.
+NetworkAlias=backend
+
+[Service]
+Restart=on-failure
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target default.target

@@ -13,8 +13,8 @@ class Settings(BaseSettings):
     environment: str = "dev"  # dev | prod
 
     # --- Database ---
-    # Default targets the docker-compose `db` service; override for local runs.
-    database_url: str = "mysql+pymysql://wearable:wearable@db:3306/wearable_hub"
+    # External MariaDB; override per environment via .env.
+    database_url: str = "mysql+pymysql://wearable:wearable@localhost:3306/wearable_hub"
 
     # --- Token encryption at rest (Fernet) ---
     # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
@@ -63,10 +63,10 @@ class Settings(BaseSettings):
     # Scopes for the service-account token used for project/subscriber management.
     gh_sa_scopes: str = "https://www.googleapis.com/auth/cloud-platform"
 
-    # --- Public URLs (host: omnikog.asuscomm.com, HTTPS) ---
+    # --- Public URLs (host: lnpitask.umn.edu, HTTPS) ---
     # Google requires HTTPS redirect URIs; must exactly match the Cloud Console authorized URI.
-    oauth_redirect_uri: str = "https://omnikog.asuscomm.com/enroll/callback"
-    webhook_public_url: str = "https://omnikog.asuscomm.com/webhooks/google-health"
+    oauth_redirect_uri: str = "https://lnpitask.umn.edu/enroll/callback"
+    webhook_public_url: str = "https://lnpitask.umn.edu/webhooks/google-health"
     # Shared secret for verifying inbound webhook notifications (scheme TBD per Google docs).
     webhook_secret: str = ""
 
