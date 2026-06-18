@@ -22,6 +22,11 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
   const load = useCallback(() => guard(async () => setDaily(await api.daily(subject.id))), [guard, subject.id]);
   useEffect(() => { load(); }, [load]);
   // Paired-device snapshots are best-effort (needs the settings scope on the grant); never block.
+  // A consolidate of a recent day refreshes them server-side, so re-fetch after a pull too.
+  const loadDevices = useCallback(
+    () => api.devices(subject.id).then(setDevices).catch(() => setDevices([])),
+    [subject.id],
+  );
   useEffect(() => {
     let alive = true;
     api.devices(subject.id).then((d) => alive && setDevices(d)).catch(() => alive && setDevices([]));
@@ -96,7 +101,7 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
                   if (!start || !end) throw new Error("Pick both a start and end date to pull.");
                   if (end < start) throw new Error("End date must be on or after the start date.");
                   setBusy(true);
-                  try { await api.consolidate(subject.id, start, end); await load(); } finally { setBusy(false); }
+                  try { await api.consolidate(subject.id, start, end); await load(); await loadDevices(); } finally { setBusy(false); }
                 })
               }
             >
