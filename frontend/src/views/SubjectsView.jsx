@@ -170,12 +170,12 @@ export default function SubjectsView({ studyId, canAdmin, guard }) {
                 <Th>Entry code</Th>
                 <Th>Study ID</Th>
                 <SortTh label="Label" sortKey="label" sort={sort} onSort={onSort} />
-                <Th>Collection window</Th>
-                <SortTh label="Status" sortKey="status" sort={sort} onSort={onSort} />
-                <SortTh label="Linked" sortKey="linked" sort={sort} onSort={onSort} />
                 <Th>Battery</Th>
                 <Th>Data (7d)</Th>
                 <Th>Latest</Th>
+                <Th>Collection window</Th>
+                <SortTh label="Status" sortKey="status" sort={sort} onSort={onSort} />
+                <SortTh label="Linked" sortKey="linked" sort={sort} onSort={onSort} />
                 {canAdmin && <Th />}
               </tr>
             </thead>
@@ -194,12 +194,12 @@ export default function SubjectsView({ studyId, canAdmin, guard }) {
                     <Td><code className="rounded bg-gray-100 px-1.5 py-0.5 text-xs dark:bg-neutral-800">{s.entry_code}</code></Td>
                     <Td className="font-medium">{s.participant_id || <span className="text-gray-300">—</span>}</Td>
                     <Td>{s.subject_label || <span className="text-gray-300">—</span>}</Td>
-                    <Td className="whitespace-nowrap text-xs text-gray-500">{win || <span className="text-gray-300">—</span>}</Td>
-                    <Td className="text-gray-500">{s.status}</Td>
-                    <Td>{s.registered ? <Badge tone="green">linked</Badge> : <Badge>no</Badge>}</Td>
                     <Td><BatteryCell s={s} /></Td>
                     <Td><WeekDataCell s={s} /></Td>
                     <Td><LatestCell s={s} /></Td>
+                    <Td className="whitespace-nowrap text-xs text-gray-500">{win || <span className="text-gray-300">—</span>}</Td>
+                    <Td className="text-gray-500">{s.status}</Td>
+                    <Td>{s.registered ? <Badge tone="green">linked</Badge> : <Badge>no</Badge>}</Td>
                     {canAdmin && (
                       <Td className="text-right" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-3">
