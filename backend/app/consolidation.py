@@ -34,6 +34,7 @@ from app.models import (
     ConsolidationState,
     DailyHealth,
     HealthDataPoint,
+    PairedDevice,
     ProviderAccount,
     Study,
     Subject,
@@ -420,6 +421,43 @@ def _upsert_hr_bucket(db: Session, account_id: int, d: date, bkt: dict, offset: 
     row.payload = {"bpm_avg": bkt["avg"], "samples": bkt["n"], "bucket_minutes": bucket_min}
 
 
+def _upsert_paired_device(db: Session, account_id: int, dev: dict) -> None:
+    """Upsert one PairedDevice snapshot row (keyed by the Google resource `name`)."""
+    name = dev.get("name") or dev.get("macAddress")
+    if not name:
+        return
+    row = db.scalar(
+        select(PairedDevice).where(
+            PairedDevice.provider_account_id == account_id,
+            PairedDevice.device_name == name,
+        )
+    )
+    if row is None:
+        row = PairedDevice(provider_account_id=account_id, device_name=name)
+        db.add(row)
+        db.flush()  # see _upsert_point: same-run dedupe under autoflush=False
+    row.device_type = dev.get("deviceType")
+    row.device_version = dev.get("deviceVersion")
+    row.battery_level = _to_int(dev.get("batteryLevel"))
+    row.battery_status = dev.get("batteryStatus")
+    row.last_sync_time = _parse_iso(dev.get("lastSyncTime"))
+    row.mac_address = dev.get("macAddress")
+    row.features = dev.get("features")
+    row.raw_json = dev
+
+
+def refresh_paired_devices(db: Session, account: ProviderAccount, token: str) -> int:
+    """Pull + upsert the account's paired-device snapshots. Returns the count seen.
+
+    Battery/sync are "now" values, so callers only refresh when consolidating a recent day.
+    Fault-isolated by the caller; the settings.readonly scope must be on the grant."""
+    devices = fitbit_gh.list_paired_devices(token)
+    for dev in devices:
+        if isinstance(dev, dict):
+            _upsert_paired_device(db, account.id, dev)
+    return len(devices)
+
+
 def _get_or_create_state(db: Session, account_id: int, d: date) -> ConsolidationState:
     row = db.scalar(
         select(ConsolidationState).where(
@@ -546,6 +584,18 @@ def consolidate_day(db: Session, account: ProviderAccount, d: date) -> Consolida
     except httpx.HTTPStatusError as exc:
         errors["hrv:list"] = exc.response.status_code
 
+    # SpO2 (blood oxygen) — pull-only (NOT webhook-subscribable). The daily summary is a
+    # day-keyed list type (typically computed during sleep): avg + lower/upper bound %.
+    try:
+        spo2 = pull_daily_value(token, "daily-oxygen-saturation", d, "daily_oxygen_saturation.date")
+        if spo2:
+            metrics["spo2"] = spo2
+            avg = _num(spo2.get("averagePercentage"))
+            if avg is not None:
+                typed["spo2_avg"] = round(avg, 1)
+    except httpx.HTTPStatusError as exc:
+        errors["spo2:list"] = exc.response.status_code
+
     # Intraday heart rate — OPT-IN per study, downsampled to N-minute buckets (raw HR is
     # 1000+ samples/day). Stored as `heart_rate` points so they show in the day expansion + export.
     subj = db.get(Subject, account.subject_id)
@@ -563,6 +613,16 @@ def consolidate_day(db: Session, account: ProviderAccount, d: date) -> Consolida
                 hr_meta["bucket_minutes"] = bucket_min
         except httpx.HTTPStatusError as exc:
             errors["heart_rate:intraday"] = exc.response.status_code
+
+    # Paired-device snapshot (battery, last sync, model) — profile data, not per-day. Battery is
+    # a "now" value, so only refresh when consolidating a recent day to avoid hitting the
+    # HealthProfile endpoint once per day on long backfills. Fault-isolated.
+    if d >= date.today() - timedelta(days=2):
+        try:
+            n = refresh_paired_devices(db, account, token)
+            metrics["paired_devices"] = {"count": n}
+        except httpx.HTTPStatusError as exc:
+            errors["paired_devices"] = exc.response.status_code
 
     if errors:
         metrics["_errors"] = errors
@@ -592,6 +652,7 @@ def _upsert_daily(db, account, d, typed, metrics, point_count, tz_off) -> None:
     row.hr_avg = typed.get("hr_avg")
     row.resting_hr = typed.get("resting_hr")
     row.hrv_ms = typed.get("hrv_ms")
+    row.spo2_avg = typed.get("spo2_avg")
     row.metrics = metrics
     row.point_count = point_count
     row.pulled_at = datetime.utcnow()

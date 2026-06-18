@@ -57,7 +57,7 @@ function csvRow(vals) {
 
 const DAILY_COLS = [
   "date", "tz_offset_seconds", "steps", "distance_m", "calories", "floors", "sleep_minutes",
-  "hr_avg", "resting_hr", "hrv_ms",
+  "hr_avg", "resting_hr", "hrv_ms", "spo2_avg",
   "sleep_total_min", "sleep_asleep_min", "awake_min", "light_min", "deep_min", "rem_min", "point_count",
 ];
 
@@ -66,7 +66,7 @@ function dailyVals(d) {
   const st = sl.stages || {};
   return [
     d.date, d.tz_offset_seconds, d.steps, d.distance_m, d.calories, d.floors, d.sleep_minutes,
-    d.hr_avg, d.resting_hr, d.hrv_ms,
+    d.hr_avg, d.resting_hr, d.hrv_ms, d.spo2_avg,
     sl.total_min, sl.asleep_min, st.AWAKE, st.LIGHT, st.DEEP, st.REM, d.point_count,
   ];
 }

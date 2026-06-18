@@ -77,10 +77,17 @@ researcher auth/RBAC foundation. Built and verified against the live API:
   `daily_health` row per subject per **local** day; raw intraday points kept in
   `health_data_points`. Triggers: real-time (webhook → `BackgroundTasks`), scheduled
   (`scheduler` compose service), on-demand admin endpoint.
-- **Heart rate + HRV** — NOT webhook-subscribable, so pulled during consolidation: daily
-  avg/min/max HR (`dailyRollUp`), resting HR + HRV (day-filtered `list`) → typed
-  `hr_avg`/`resting_hr`/`hrv_ms`. Raw intraday HR is a per-study opt-in
-  (`studies.ingest_intraday_hr`), downsampled to N-minute average buckets.
+- **Heart rate + HRV + SpO2** — NOT webhook-subscribable, so pulled during consolidation: daily
+  avg/min/max HR (`dailyRollUp`), resting HR + HRV + SpO2 (day-filtered `list`) → typed
+  `hr_avg`/`resting_hr`/`hrv_ms`/`spo2_avg`. SpO2 uses `daily-oxygen-saturation`
+  (`daily_oxygen_saturation.date`); bounds kept in `daily_health.metrics.spo2`. Raw intraday HR is
+  a per-study opt-in (`studies.ingest_intraday_hr`), downsampled to N-minute average buckets.
+- **Paired devices (battery / model / last sync)** — profile data, NOT a dataType: pulled from the
+  HealthProfile endpoint `GET /users/me/pairedDevices` (subject token, scope
+  `…/googlehealth.settings.readonly`) into `paired_devices`, refreshed only when consolidating a
+  *recent* day (battery is a "now" value). `GET /admin/subjects/{id}/devices` + console panel.
+  **Both SpO2 and paired devices need their scopes added to `GOOGLE_HEALTH_SCOPES` (SpO2 →
+  `…/health_metrics_and_measurements.readonly`) and subjects re-enrolled.**
 - **Researcher console** (`frontend/`, Vite/React, **Tailwind v4 + lucide**, UMN maroon/gold +
   dark mode) — collapsible sidebar nav (Studies / Subjects / Researchers / About); Google login +
   RBAC (superuser / study-admin / member); studies/subjects/members management; daily + expandable

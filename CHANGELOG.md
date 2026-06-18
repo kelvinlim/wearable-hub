@@ -6,6 +6,28 @@ milestone progress rather than released versions.
 
 ## [Unreleased]
 
+### Added
+
+- **SpO2 (blood oxygen) ingestion.** Like HR/HRV, SpO2 is **not webhook-subscribable**, so the
+  daily summary is pulled during consolidation via a day-filtered `daily-oxygen-saturation` list
+  (`daily_oxygen_saturation.date`). The headline average lands in the new `daily_health.spo2_avg`
+  typed column; lower/upper bound % stay in `daily_health.metrics.spo2`. Surfaced in the console
+  daily table (`SpO₂` column), JSON export, and daily CSV. Migration `0009`.
+- **Paired-device snapshots (battery / model / last sync).** Device info is **profile data, not a
+  dataType** — fetched from the HealthProfile endpoint `GET /users/me/pairedDevices` with the
+  subject's token. One `paired_devices` row per (account, device) holds `device_type`
+  (TRACKER|SCALE), `device_version`, `battery_level`, `battery_status` (High|Medium|Low|Empty),
+  `last_sync_time`, `mac_address`, `features[]`. Refreshed during consolidation of a *recent* day
+  only (battery is a "now" value; avoids hammering the endpoint on long backfills). New
+  `GET /admin/subjects/{id}/devices`, included in subject export, and shown as a "Paired devices"
+  panel in the console. Migration `0009`.
+- **Required OAuth scopes.** Both features need scopes on the subject grant
+  (`GOOGLE_HEALTH_SCOPES`): SpO2 → `…/auth/googlehealth.health_metrics_and_measurements.readonly`;
+  paired devices → `…/auth/googlehealth.settings.readonly`. Add these in the Cloud Console "Data
+  Access" page and to `GOOGLE_HEALTH_SCOPES`, then **re-enroll** subjects so the new scopes are
+  granted. Both pulls are fault-isolated, so a missing scope degrades gracefully (the metric/panel
+  is just empty) rather than failing the day.
+
 ### Infrastructure
 
 - **Host + DB migration:** moved from `omnikog.asuscomm.com` to `lnpitask.umn.edu` and

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { ChevronRight, ChevronDown, Download, Ban } from "lucide-react";
+import { ChevronRight, ChevronDown, Download, Ban, BatteryFull } from "lucide-react";
 import { api } from "../api";
 import { Card, Button, Badge, Select, Th, Td, Empty, SectionTitle } from "../ui";
 import {
@@ -9,6 +9,7 @@ import {
 
 export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
   const [daily, setDaily] = useState([]);
+  const [devices, setDevices] = useState([]);
   const [openDay, setOpenDay] = useState(null);
   const [dayPts, setDayPts] = useState([]);
   const [start, setStart] = useState(subject.collection_start || today());
@@ -20,6 +21,12 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
 
   const load = useCallback(() => guard(async () => setDaily(await api.daily(subject.id))), [guard, subject.id]);
   useEffect(() => { load(); }, [load]);
+  // Paired-device snapshots are best-effort (needs the settings scope on the grant); never block.
+  useEffect(() => {
+    let alive = true;
+    api.devices(subject.id).then((d) => alive && setDevices(d)).catch(() => alive && setDevices([]));
+    return () => { alive = false; };
+  }, [subject.id]);
   // Reset per-subject UI state when the selection changes (the component instance is reused),
   // re-seeding the consolidate range from the subject's collection window (or today).
   useEffect(() => {
@@ -45,7 +52,7 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
       else download(`${base}-points.csv`, "text/csv", pointsCsv(data));
     });
 
-  const HEAD = ["Date", "Steps", "Dist (m)", "Cal", "Floors", "Sleep", "HR avg", "Rest HR", "HRV", "Pts"];
+  const HEAD = ["Date", "Steps", "Dist (m)", "Cal", "Floors", "Sleep", "HR avg", "Rest HR", "HRV", "SpO₂", "Pts"];
 
   return (
     <Card className="overflow-hidden">
@@ -106,6 +113,8 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
         )}
       </div>
 
+      {devices.length > 0 && <DevicesPanel devices={devices} />}
+
       <div className="overflow-x-auto">
         <table className="w-full">
           <thead className="border-b border-gray-100 dark:border-neutral-800">
@@ -132,6 +141,7 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
                   <Td>{cell(d.hr_avg)}</Td>
                   <Td>{cell(d.resting_hr)}</Td>
                   <Td>{cell(d.hrv_ms)}</Td>
+                  <Td>{cell(d.spo2_avg)}</Td>
                   <Td className="text-gray-400">{d.point_count}</Td>
                 </tr>
                 {openDay === d.date && (
@@ -156,6 +166,39 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
 function cell(v) {
   const f = fmtNum(v);
   return f == null ? <span className="text-gray-300 dark:text-neutral-600">—</span> : f;
+}
+
+// Battery status → tone for the level pill. Google returns High|Medium|Low|Empty.
+const BATT_TONE = { High: "green", Medium: "gold", Low: "red", Empty: "red" };
+
+function DevicesPanel({ devices }) {
+  return (
+    <div className="border-b border-gray-100 p-4 dark:border-neutral-800">
+      <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Paired devices</span>
+      <div className="mt-2 flex flex-wrap gap-3">
+        {devices.map((d) => (
+          <div key={d.device_name} className="min-w-[180px] rounded-lg border border-gray-200 p-3 text-sm dark:border-neutral-700">
+            <div className="flex items-center gap-2 font-medium">
+              <BatteryFull className="h-4 w-4 text-gray-400" />
+              {d.device_version || d.device_type || "Device"}
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+              {d.battery_level != null && (
+                <Badge tone={BATT_TONE[d.battery_status] || "gray"}>{d.battery_level}%</Badge>
+              )}
+              {d.battery_status && <span className="text-gray-400">{d.battery_status}</span>}
+              {d.device_type && <span className="text-gray-400">· {d.device_type}</span>}
+            </div>
+            {d.last_sync_time && (
+              <div className="mt-1 text-xs text-gray-400">
+                synced {new Date(d.last_sync_time).toLocaleString()}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function PointsView({ points, daily }) {

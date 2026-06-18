@@ -338,3 +338,31 @@ def create_subscription(
     )
     resp.raise_for_status()
     return resp.json()
+
+
+def list_paired_devices(access_token: str) -> list[dict]:
+    """The subject's paired trackers/scales (HealthProfile service). Uses the SUBJECT's token.
+
+    GET /v4/users/me/pairedDevices?pageSize=100 — profile data, not a dataType; needs the
+    `…/auth/googlehealth.settings.readonly` scope on the subject grant. Each PairedDevice has
+    `name`, `deviceType` (TRACKER|SCALE), `batteryLevel`, `batteryStatus` (High|Medium|Low|Empty),
+    `lastSyncTime`, `deviceVersion`, `macAddress`, `features[]`. Paginated; returns all pages.
+    """
+    url = f"{HEALTH_API_BASE}/users/me/pairedDevices"
+    out: list[dict] = []
+    page_token: str | None = None
+    for _ in range(20):  # safety bound (default page 5, max 100; few devices in practice)
+        params = {"pageSize": "100"}
+        if page_token:
+            params["pageToken"] = page_token
+        resp = httpx.get(
+            url, params=params, headers={"Authorization": f"Bearer {access_token}"},
+            timeout=_HTTP_TIMEOUT,
+        )
+        resp.raise_for_status()
+        j = resp.json()
+        out.extend(j.get("pairedDevices") or [])
+        page_token = j.get("nextPageToken")
+        if not page_token:
+            break
+    return out
