@@ -10,7 +10,7 @@ from datetime import date, timedelta
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app import consolidation
@@ -22,6 +22,7 @@ from app.models import (
     DailyHealth,
     HealthData,
     HealthDataPoint,
+    PairedDevice,
     ProjectSubscriber,
     ProviderAccount,
     Study,
@@ -108,6 +109,10 @@ def update_study(
     assert_study_admin(db, user, study_id)
     if payload.ingest_intraday_hr is not None:
         study.ingest_intraday_hr = payload.ingest_intraday_hr
+    if payload.ingest_intraday_hrv is not None:
+        study.ingest_intraday_hrv = payload.ingest_intraday_hrv
+    if payload.ingest_intraday_spo2 is not None:
+        study.ingest_intraday_spo2 = payload.ingest_intraday_spo2
     db.commit()
     db.refresh(study)
     return study
@@ -184,7 +189,7 @@ def delete_subject(
         )
     acct_ids = [a.id for a in accounts]
     if acct_ids:
-        for model in (Subscription, DailyHealth, HealthDataPoint, ConsolidationState, HealthData):
+        for model in (Subscription, DailyHealth, HealthDataPoint, ConsolidationState, HealthData, PairedDevice):
             db.execute(delete(model).where(model.provider_account_id.in_(acct_ids)))
         db.execute(delete(ProviderAccount).where(ProviderAccount.id.in_(acct_ids)))
     db.delete(subj)
@@ -476,6 +481,7 @@ def list_daily(
             "hr_avg": r.hr_avg,
             "resting_hr": r.resting_hr,
             "hrv_ms": r.hrv_ms,
+            "spo2_avg": r.spo2_avg,
             "point_count": r.point_count,
             "metrics": r.metrics,
         }
@@ -528,6 +534,42 @@ def list_day_points(
     return [_point_to_dict(r) for r in rows]
 
 
+def _device_to_dict(r: PairedDevice) -> dict:
+    return {
+        "device_name": r.device_name,
+        "device_type": r.device_type,
+        "device_version": r.device_version,
+        "battery_level": r.battery_level,
+        "battery_status": r.battery_status,
+        "last_sync_time": r.last_sync_time.isoformat() if r.last_sync_time else None,
+        "mac_address": r.mac_address,
+        "features": r.features,
+        "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+    }
+
+
+def _devices_for_account(db: Session, account_id: int) -> list[dict]:
+    rows = db.scalars(
+        select(PairedDevice)
+        .where(PairedDevice.provider_account_id == account_id)
+        .order_by(PairedDevice.device_type, PairedDevice.device_name)
+    )
+    return [_device_to_dict(r) for r in rows]
+
+
+@router.get("/subjects/{subject_id}/devices")
+def list_devices(
+    subject_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> list[dict]:
+    """A subject's paired devices (latest snapshot: battery, last sync, model). Study view.
+
+    Snapshots are refreshed during consolidation of a recent day; battery/sync reflect the last
+    such pull (`updated_at`). Empty if the subject's grant lacks the settings.readonly scope."""
+    assert_study_view(db, user, study_id_for_subject(db, subject_id))
+    acct = _fitbit_account(db, subject_id)
+    return _devices_for_account(db, acct.id)
+
+
 @router.get("/subjects/{subject_id}/export")
 def export_subject(
     subject_id: int,
@@ -565,7 +607,9 @@ def _subject_export_payload(
         "health_user_id": acct.health_user_id if acct else None,
     }
     if acct is None:
+        subject["devices"] = []
         return {"subject": subject, "days": []}
+    subject["devices"] = _devices_for_account(db, acct.id)
 
     dq = select(DailyHealth).where(DailyHealth.provider_account_id == acct.id)
     pq = select(HealthDataPoint).where(HealthDataPoint.provider_account_id == acct.id)
@@ -594,6 +638,7 @@ def _subject_export_payload(
             "hr_avg": d.hr_avg,
             "resting_hr": d.resting_hr,
             "hrv_ms": d.hrv_ms,
+            "spo2_avg": d.spo2_avg,
             "metrics": d.metrics,
             "point_count": d.point_count,
             "points": by_day.get(d.local_date, []),
@@ -645,6 +690,17 @@ def list_subjects(
     subjects = db.scalars(
         select(Subject).where(Subject.study_id == study_id).order_by(Subject.id)
     )
+    today = date.today()
+    week_ago = today - timedelta(days=6)
+    # A day "has data" if it carried any consolidated metric (a row alone isn't enough:
+    # consolidate writes an empty row for out-of-range / no-data days too).
+    has_data = or_(
+        DailyHealth.point_count > 0,
+        DailyHealth.steps.isnot(None),
+        DailyHealth.calories.isnot(None),
+        DailyHealth.sleep_minutes.isnot(None),
+        DailyHealth.hr_avg.isnot(None),
+    )
     out: list[SubjectStatusOut] = []
     for subj in subjects:
         acct = db.scalar(
@@ -655,8 +711,55 @@ def list_subjects(
         )
         item = SubjectStatusOut.model_validate(subj)
         item.registered = bool(acct and acct.registered)
+        if acct is not None:
+            _attach_health_summary(db, item, subj, acct.id, today, week_ago, has_data)
         out.append(item)
     return out
+
+
+def _attach_health_summary(db, item, subj, account_id, today, week_ago, has_data) -> None:
+    """Fill the list-view battery + data-freshness fields for one linked account."""
+    # Lowest-battery device (nulls last) — surfaces the most concerning one.
+    dev = db.scalar(
+        select(PairedDevice)
+        .where(PairedDevice.provider_account_id == account_id)
+        .order_by(PairedDevice.battery_level.is_(None), PairedDevice.battery_level.asc())
+    )
+    if dev is not None:
+        item.battery_level = dev.battery_level
+        item.battery_status = dev.battery_status
+        item.battery_low = dev.battery_status in ("Low", "Empty") or (
+            dev.battery_level is not None and dev.battery_level <= 20
+        )
+
+    item.last_data_date = db.scalar(
+        select(func.max(DailyHealth.local_date)).where(
+            DailyHealth.provider_account_id == account_id, has_data
+        )
+    )
+    item.days_with_data_7 = (
+        db.scalar(
+            select(func.count(func.distinct(DailyHealth.local_date))).where(
+                DailyHealth.provider_account_id == account_id,
+                DailyHealth.local_date >= week_ago,
+                DailyHealth.local_date <= today,
+                has_data,
+            )
+        )
+        or 0
+    )
+
+    # Stale only flags subjects we'd *expect* fresh data from: linked and inside their
+    # collection window (a closed/not-yet-started window makes "no recent data" expected).
+    in_window = not (
+        (subj.collection_end and subj.collection_end < today)
+        or (subj.collection_start and subj.collection_start > today)
+    )
+    item.data_stale = bool(
+        item.registered
+        and in_window
+        and (item.last_data_date is None or item.last_data_date < today - timedelta(days=2))
+    )
 
 
 # --- Researcher (user) management — superuser only ------------------------------

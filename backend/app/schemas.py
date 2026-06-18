@@ -19,11 +19,15 @@ class StudyOut(BaseModel):
     name: str
     description: str | None
     ingest_intraday_hr: bool = False
+    ingest_intraday_hrv: bool = False
+    ingest_intraday_spo2: bool = False
     created_at: datetime | None
 
 
 class StudyUpdate(BaseModel):
     ingest_intraday_hr: bool | None = None
+    ingest_intraday_hrv: bool | None = None
+    ingest_intraday_spo2: bool | None = None
 
 
 # --- Admin: subjects ------------------------------------------------------------
@@ -60,9 +64,17 @@ class SubjectOut(BaseModel):
 
 
 class SubjectStatusOut(SubjectOut):
-    """Subject plus registration status of its Fitbit/Google-Health account."""
+    """Subject plus registration status + a compact health/freshness summary for the list view."""
 
     registered: bool = False
+    # Lowest battery across the subject's paired devices (the most concerning one).
+    battery_level: int | None = None
+    battery_status: str | None = None  # High | Medium | Low | Empty
+    battery_low: bool = False
+    # Data freshness/completeness.
+    last_data_date: date | None = None
+    days_with_data_7: int = 0  # days with consolidated data in the last 7 (0–7)
+    data_stale: bool = False  # linked + in-window but no data in the last 2 days
 
 
 # --- Admin: researchers (users) + study membership ------------------------------

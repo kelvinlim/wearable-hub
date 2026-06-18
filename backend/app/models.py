@@ -68,6 +68,9 @@ class Study(Base):
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     # Opt-in: store downsampled intraday heart-rate for this study's subjects.
     ingest_intraday_hr: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Opt-in: store raw intraday HRV / SpO2 samples (sleep-period, low-frequency — not downsampled).
+    ingest_intraday_hrv: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    ingest_intraday_spo2: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     created_by: Mapped["User | None"] = relationship(back_populates="studies")
@@ -239,6 +242,7 @@ class DailyHealth(Base):
     hr_avg: Mapped[float | None] = mapped_column(Float)  # daily average BPM
     resting_hr: Mapped[int | None] = mapped_column()  # daily resting BPM
     hrv_ms: Mapped[float | None] = mapped_column(Float)  # daily HRV (avg ms)
+    spo2_avg: Mapped[float | None] = mapped_column(Float)  # daily avg SpO2 % (typ. during sleep)
 
     metrics: Mapped[dict | None] = mapped_column(JSON)
     point_count: Mapped[int] = mapped_column(default=0, nullable=False)
@@ -270,6 +274,39 @@ class ConsolidationState(Base):
     requested_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
     detail: Mapped[str | None] = mapped_column(Text)
+
+
+class PairedDevice(Base):
+    """Latest-known snapshot of a subject's paired Google Health tracker/scale.
+
+    Profile data, NOT time-series: fetched from `GET /users/me/pairedDevices` (HealthProfile
+    service, scope `…/googlehealth.settings.readonly`) — there is no dataType / webhook for it.
+    Battery level/status is a "now" value, so the snapshot is refreshed only when consolidating
+    a recent day (see `consolidation.refresh_paired_devices`). `device_name` is Google's resource
+    name (e.g. `users/me/pairedDevices/123`) and keys the upsert.
+    """
+
+    __tablename__ = "paired_devices"
+    __table_args__ = (
+        UniqueConstraint("provider_account_id", "device_name", name="uq_paired_acct_device"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    provider_account_id: Mapped[int] = mapped_column(
+        ForeignKey("provider_accounts.id"), nullable=False, index=True
+    )
+    device_name: Mapped[str] = mapped_column(String(255), nullable=False)  # Google resource name
+    device_type: Mapped[str | None] = mapped_column(String(32))  # TRACKER | SCALE
+    device_version: Mapped[str | None] = mapped_column(String(255))  # product name
+    battery_level: Mapped[int | None] = mapped_column()  # percentage
+    battery_status: Mapped[str | None] = mapped_column(String(16))  # High | Medium | Low | Empty
+    last_sync_time: Mapped[datetime | None] = mapped_column(DateTime)  # UTC
+    mac_address: Mapped[str | None] = mapped_column(String(64))
+    features: Mapped[list | None] = mapped_column(JSON)
+    raw_json: Mapped[dict | None] = mapped_column(JSON)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
 
 
 class HealthData(Base):

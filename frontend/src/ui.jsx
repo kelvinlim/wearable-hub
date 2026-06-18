@@ -41,6 +41,7 @@ const TONES = {
   green: "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300",
   gold: "bg-gold/25 text-maroon dark:text-gold",
   maroon: "bg-maroon/10 text-maroon dark:bg-maroon/40 dark:text-gold",
+  red: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
 };
 
 export function Badge({ tone = "gray", className, children }) {

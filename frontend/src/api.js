@@ -46,6 +46,7 @@ export const api = {
   daily: (subjectId) => req(`/admin/subjects/${subjectId}/daily`),
   dayPoints: (subjectId, day) =>
     req(`/admin/subjects/${subjectId}/daily/${day}/points`),
+  devices: (subjectId) => req(`/admin/subjects/${subjectId}/devices`),
   exportSubject: (subjectId, start, end) => {
     const q = new URLSearchParams();
     if (start) q.set("start", start);
