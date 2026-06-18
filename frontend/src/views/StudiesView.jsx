@@ -18,7 +18,7 @@ export default function StudiesView({ studies, selectedStudyId, onStudyChange, r
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="border-b border-gray-100 dark:border-neutral-800">
-              <tr><Th>Name</Th><Th>Intraday HR</Th></tr>
+              <tr><Th>Name</Th><Th>Intraday</Th></tr>
             </thead>
             <tbody>
               {studies.map((s) => (
@@ -34,7 +34,7 @@ export default function StudiesView({ studies, selectedStudyId, onStudyChange, r
                     <div className="font-medium">{s.name}</div>
                     {s.description && <div className="text-xs text-gray-400">{s.description}</div>}
                   </Td>
-                  <Td>{s.ingest_intraday_hr ? <Badge tone="maroon">on</Badge> : <span className="text-gray-300">off</span>}</Td>
+                  <Td><IntradayFlags study={s} /></Td>
                 </tr>
               ))}
               {studies.length === 0 && <tr><td colSpan={2}><Empty>No studies.</Empty></td></tr>}
@@ -72,6 +72,27 @@ export default function StudiesView({ studies, selectedStudyId, onStudyChange, r
   );
 }
 
+// Compact on/off badges for the three intraday opt-ins.
+function IntradayFlags({ study }) {
+  const on = [
+    study.ingest_intraday_hr && "HR",
+    study.ingest_intraday_hrv && "HRV",
+    study.ingest_intraday_spo2 && "SpO₂",
+  ].filter(Boolean);
+  if (!on.length) return <span className="text-gray-300">off</span>;
+  return (
+    <div className="flex flex-wrap gap-1">
+      {on.map((l) => <Badge key={l} tone="maroon">{l}</Badge>)}
+    </div>
+  );
+}
+
+const INTRADAY_OPTS = [
+  { key: "ingest_intraday_hr", label: "heart rate (downsampled)" },
+  { key: "ingest_intraday_hrv", label: "HRV (raw sleep samples)" },
+  { key: "ingest_intraday_spo2", label: "SpO₂ (raw sleep samples)" },
+];
+
 function SettingsCard({ study, canAdmin, guard, onChanged }) {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -95,16 +116,25 @@ function SettingsCard({ study, canAdmin, guard, onChanged }) {
       <SectionTitle className="mb-3">{study.name}</SectionTitle>
 
       {canAdmin && (
-        <label className="mb-4 flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            className="h-4 w-4 accent-maroon"
-            checked={!!study.ingest_intraday_hr}
-            onChange={(e) => guard(async () => { await api.updateStudy(study.id, { ingest_intraday_hr: e.target.checked }); onChanged(); })}
-          />
-          <HeartPulse className="h-4 w-4 text-maroon dark:text-gold" />
-          Ingest intraday heart rate (downsampled) for this study
-        </label>
+        <div className="mb-4 space-y-2">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
+            <HeartPulse className="h-4 w-4 text-maroon dark:text-gold" /> Intraday ingestion
+          </div>
+          {INTRADAY_OPTS.map((opt) => (
+            <label key={opt.key} className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="h-4 w-4 accent-maroon"
+                checked={!!study[opt.key]}
+                onChange={(e) => guard(async () => { await api.updateStudy(study.id, { [opt.key]: e.target.checked }); onChanged(); })}
+              />
+              {opt.label}
+            </label>
+          ))}
+          <p className="text-xs text-gray-400">
+            Raw HRV/SpO₂ are sleep-period samples; subjects need the matching scopes granted.
+          </p>
+        </div>
       )}
 
       <div className="flex flex-wrap items-center gap-2 text-sm">

@@ -68,6 +68,9 @@ class Study(Base):
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     # Opt-in: store downsampled intraday heart-rate for this study's subjects.
     ingest_intraday_hr: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Opt-in: store raw intraday HRV / SpO2 samples (sleep-period, low-frequency — not downsampled).
+    ingest_intraday_hrv: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    ingest_intraday_spo2: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     created_by: Mapped["User | None"] = relationship(back_populates="studies")

@@ -265,6 +265,49 @@ def pull_intraday_hr(token: str, d: date, tz_off: int | None, bucket_min: int) -
     ]
 
 
+# Per-study opt-in intraday *sample* types (sleep-period, low-frequency — stored raw, no
+# downsampling). Keyed by the datatype string we store on HealthDataPoint rows; values are
+# (read_id, value-object key, scalar key inside it). Verified live 2026-06-18.
+INTRADAY_SAMPLE_TYPES: dict[str, tuple[str, str, str]] = {
+    "heart_rate_variability": (
+        "heart-rate-variability", "heartRateVariability",
+        "rootMeanSquareOfSuccessiveDifferencesMilliseconds",  # RMSSD ms
+    ),
+    "oxygen_saturation": ("oxygen-saturation", "oxygenSaturation", "percentage"),
+}
+
+
+def pull_intraday_samples(token: str, read_id: str, d: date, tz_off: int | None) -> list[dict]:
+    """Raw instantaneous samples (HRV, SpO2) for local day `d`.
+
+    These sample-time types aren't civil_start_time-filterable, so we filter on the
+    `sample_time.physical_time` UTC window for the local day (same trick as intraday HR). They're
+    sleep-period and low-frequency (tens of points/day), so the raw dataPoints are returned as-is."""
+    offset = tz_off or 0
+    start_utc = datetime(d.year, d.month, d.day) - timedelta(seconds=offset)
+    end_utc = start_utc + timedelta(days=1)
+    field = read_id.replace("-", "_")
+    flt = (
+        f'{field}.sample_time.physical_time >= "{start_utc.isoformat()}Z" '
+        f'AND {field}.sample_time.physical_time < "{end_utc.isoformat()}Z"'
+    )
+    url = f"{_BASE}/users/me/dataTypes/{read_id}/dataPoints"
+    out: list[dict] = []
+    page_token = None
+    for _ in range(50):  # safety bound
+        params = {"filter": flt, "pageSize": "1000"}
+        if page_token:
+            params["pageToken"] = page_token
+        r = httpx.get(url, params=params, headers=_auth(token), timeout=_TIMEOUT)
+        r.raise_for_status()
+        j = r.json()
+        out.extend(j.get("dataPoints") or [])
+        page_token = j.get("nextPageToken")
+        if not page_token:
+            break
+    return out
+
+
 def pull_points(
     token: str, read_id: str, d: date, page_size: int = 1000, filterable: bool = True
 ) -> list[dict]:
@@ -419,6 +462,35 @@ def _upsert_hr_bucket(db: Session, account_id: int, d: date, bkt: dict, offset: 
     row.tz_offset_seconds = offset
     row.value = bkt["avg"]
     row.payload = {"bpm_avg": bkt["avg"], "samples": bkt["n"], "bucket_minutes": bucket_min}
+
+
+def _upsert_sample_point(
+    db: Session, account_id: int, datatype: str, value_key: str, scalar_key: str, d: date, dp: dict
+) -> None:
+    """Upsert one instantaneous sample (HRV/SpO2) as a HealthDataPoint, keyed by its sample time."""
+    vo = dp.get(value_key) or {}
+    st = vo.get("sampleTime") or {}
+    t = _parse_iso(st.get("physicalTime"))
+    off = _offset_seconds(st.get("utcOffset"))
+    val = _num(vo.get(scalar_key))
+    point_key = f"{datatype}|{t.isoformat() if t else id(dp)}"
+    row = db.scalar(
+        select(HealthDataPoint).where(
+            HealthDataPoint.provider_account_id == account_id,
+            HealthDataPoint.datatype == datatype,
+            HealthDataPoint.point_key == point_key,
+        )
+    )
+    if row is None:
+        row = HealthDataPoint(provider_account_id=account_id, datatype=datatype, point_key=point_key)
+        db.add(row)
+        db.flush()  # see _upsert_point: flush so same-run duplicate samples update, not re-add
+    row.local_date = d
+    row.start_time = t
+    row.end_time = t
+    row.tz_offset_seconds = off
+    row.value = val
+    row.payload = dp
 
 
 def _upsert_paired_device(db: Session, account_id: int, dev: dict) -> None:
@@ -613,6 +685,25 @@ def consolidate_day(db: Session, account: ProviderAccount, d: date) -> Consolida
                 hr_meta["bucket_minutes"] = bucket_min
         except httpx.HTTPStatusError as exc:
             errors["heart_rate:intraday"] = exc.response.status_code
+
+    # Intraday HRV / SpO2 — OPT-IN per study, stored raw (sleep-period, low-frequency). Each
+    # lands as `heart_rate_variability` / `oxygen_saturation` points (day expansion + export).
+    if study:
+        for dt, enabled in (
+            ("heart_rate_variability", study.ingest_intraday_hrv),
+            ("oxygen_saturation", study.ingest_intraday_spo2),
+        ):
+            if not enabled:
+                continue
+            read_id, value_key, scalar_key = INTRADAY_SAMPLE_TYPES[dt]
+            try:
+                pts = pull_intraday_samples(token, read_id, d, tz_off)
+                for dp in pts:
+                    _upsert_sample_point(db, account.id, dt, value_key, scalar_key, d, dp)
+                point_count += len(pts)
+                metrics.setdefault("intraday", {})[dt] = len(pts)
+            except httpx.HTTPStatusError as exc:
+                errors[f"{dt}:intraday"] = exc.response.status_code
 
     # Paired-device snapshot (battery, last sync, model) — profile data, not per-day. Battery is
     # a "now" value, so only refresh when consolidating a recent day to avoid hitting the

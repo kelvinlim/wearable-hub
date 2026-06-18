@@ -109,6 +109,10 @@ def update_study(
     assert_study_admin(db, user, study_id)
     if payload.ingest_intraday_hr is not None:
         study.ingest_intraday_hr = payload.ingest_intraday_hr
+    if payload.ingest_intraday_hrv is not None:
+        study.ingest_intraday_hrv = payload.ingest_intraday_hrv
+    if payload.ingest_intraday_spo2 is not None:
+        study.ingest_intraday_spo2 = payload.ingest_intraday_spo2
     db.commit()
     db.refresh(study)
     return study
