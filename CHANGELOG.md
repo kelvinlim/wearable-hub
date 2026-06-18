@@ -27,6 +27,23 @@ milestone progress rather than released versions.
   Access" page and to `GOOGLE_HEALTH_SCOPES`, then **re-enroll** subjects so the new scopes are
   granted. Both pulls are fault-isolated, so a missing scope degrades gracefully (the metric/panel
   is just empty) rather than failing the day.
+- **Intraday HRV + SpO2 ingestion (per-study opt-in).** Two new `studies` flags
+  (`ingest_intraday_hrv`, `ingest_intraday_spo2`, migration `0010`) alongside the existing
+  `ingest_intraday_hr`. Both are **sample-time** dataTypes (`heart-rate-variability` → RMSSD ms;
+  `oxygen-saturation` → percentage), pulled with a `sample_time.physical_time` UTC-window filter
+  for the local day. They're sleep-period and low-frequency (tens of points/day), so unlike HR
+  they're stored **raw** (no downsampling) as `heart_rate_variability` / `oxygen_saturation`
+  points in `health_data_points` — visible in the day expansion + export; per-day counts in
+  `daily_health.metrics.intraday`. Toggled from the Studies console ("Intraday ingestion").
+  (Note: the API exposes only time-domain HRV — RMSSD, plus entropy/deep-sleep-RMSSD on the daily
+  summary — **no LF/HF** frequency-domain power.)
+- **Subjects-list health indicators + sorting.** The study Subjects table is now sortable by
+  Label / Status / Linked (default: linked-first) and shows a per-subject summary computed in
+  `list_subjects`: lowest **battery** across paired devices (red when Low/Empty or ≤20%), a 7-pip
+  **Data (7d)** coverage bar (`n/7` days with data), and **Latest** data date — with a "stale"
+  badge for linked, in-window subjects with no data in 2+ days. `SubjectStatusOut` gains
+  `battery_level/status/low`, `last_data_date`, `days_with_data_7`, `data_stale`. The paired-device
+  panel also re-fetches after a Pull + consolidate.
 
 ### Infrastructure
 

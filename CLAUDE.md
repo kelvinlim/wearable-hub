@@ -82,6 +82,11 @@ researcher auth/RBAC foundation. Built and verified against the live API:
   `hr_avg`/`resting_hr`/`hrv_ms`/`spo2_avg`. SpO2 uses `daily-oxygen-saturation`
   (`daily_oxygen_saturation.date`); bounds kept in `daily_health.metrics.spo2`. Raw intraday HR is
   a per-study opt-in (`studies.ingest_intraday_hr`), downsampled to N-minute average buckets.
+- **Intraday HRV + SpO2** — per-study opt-ins (`studies.ingest_intraday_hrv` / `ingest_intraday_spo2`,
+  migration `0010`). Sample-time dataTypes (`heart-rate-variability` → RMSSD ms; `oxygen-saturation`
+  → %), pulled via a `sample_time.physical_time` UTC-window filter (`pull_intraday_samples`); stored
+  **raw** (sleep-period, low-frequency) as `heart_rate_variability` / `oxygen_saturation` points.
+  The API exposes only time-domain HRV (RMSSD) — **no LF/HF** frequency-domain power.
 - **Paired devices (battery / model / last sync)** — profile data, NOT a dataType: pulled from the
   HealthProfile endpoint `GET /users/me/pairedDevices` (subject token, scope
   `…/googlehealth.settings.readonly`) into `paired_devices`, refreshed only when consolidating a
@@ -92,7 +97,10 @@ researcher auth/RBAC foundation. Built and verified against the live API:
   dark mode) — collapsible sidebar nav (Studies / Subjects / Researchers / About); Google login +
   RBAC (superuser / study-admin / member); studies/subjects/members management; daily + expandable
   intraday views; sleep stage detail; per-subject and whole-study JSON/CSV export. The
-  server-rendered subject `/enroll` page is UMN-branded with participant info.
+  server-rendered subject `/enroll` page is UMN-branded with participant info. The Subjects table
+  is sortable (Label / Status / Linked, linked-first by default) and shows per-subject health
+  indicators from `list_subjects` — battery, last-7-days data coverage, latest-data date, and a
+  "stale" badge (computed fields on `SubjectStatusOut`).
 - **Subject data-collection window** — each subject has an editable `participant_id` ("Study ID",
   distinct from the `study_id` FK) and an optional inclusive `collection_start`/`collection_end`
   (subject-local days, either bound nullable). When set, pulls are **hard-clamped** to it — enforced
