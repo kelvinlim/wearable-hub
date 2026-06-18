@@ -1,5 +1,8 @@
-import React, { useEffect, useState, useCallback } from "react";
-import { Plus, Trash2, Lock, Pencil, X } from "lucide-react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
+import {
+  Plus, Trash2, Lock, Pencil, X, ChevronUp, ChevronDown,
+  BatteryFull, BatteryWarning, AlertTriangle,
+} from "lucide-react";
 import { api } from "../api";
 import { Card, Button, Badge, Input, Th, Td, Empty } from "../ui";
 import SubjectDetail from "./SubjectDetail";
@@ -10,6 +13,82 @@ function windowLabel(s) {
   return `${s.collection_start || "…"} → ${s.collection_end || "…"}`;
 }
 
+const dash = <span className="text-gray-300 dark:text-neutral-600">—</span>;
+
+// --- Sorting ---------------------------------------------------------------
+const SORTERS = {
+  label: (s) => (s.subject_label || "").toLowerCase(),
+  status: (s) => s.status || "",
+  linked: (s) => (s.registered ? 1 : 0),
+};
+const DEFAULT_DIR = { label: "asc", status: "asc", linked: "desc" };
+
+function SortTh({ label, sortKey, sort, onSort, className }) {
+  const active = sort.key === sortKey;
+  return (
+    <Th className={className}>
+      <button
+        onClick={() => onSort(sortKey)}
+        className="inline-flex items-center gap-1 text-[11px] font-semibold uppercase tracking-wider hover:text-maroon dark:hover:text-gold"
+      >
+        {label}
+        {active && (sort.dir === "asc" ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />)}
+      </button>
+    </Th>
+  );
+}
+
+// --- Compact health indicators ---------------------------------------------
+const BATT_TONE = { High: "green", Medium: "gold", Low: "red", Empty: "red" };
+
+function relDay(d) {
+  if (!d) return null;
+  const then = new Date(d + "T00:00:00");
+  const days = Math.round((new Date(new Date().toDateString()) - new Date(then.toDateString())) / 86400000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 7) return `${days}d ago`;
+  return d;
+}
+
+function BatteryCell({ s }) {
+  if (!s.registered || s.battery_level == null) return dash;
+  const Icon = s.battery_low ? BatteryWarning : BatteryFull;
+  return (
+    <Badge tone={s.battery_low ? "red" : BATT_TONE[s.battery_status] || "gray"} className="gap-1">
+      <Icon className="h-3.5 w-3.5" />
+      {s.battery_level}%
+    </Badge>
+  );
+}
+
+// 7-pip bar of last-week coverage + the "n/7" count; flags a stale badge alongside.
+function WeekDataCell({ s }) {
+  if (!s.registered) return dash;
+  const n = s.days_with_data_7 || 0;
+  const tone = n >= 6 ? "bg-green-500" : n >= 3 ? "bg-gold" : "bg-red-500";
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex gap-0.5">
+        {Array.from({ length: 7 }).map((_, i) => (
+          <span key={i} className={"h-3 w-1.5 rounded-sm " + (i < n ? tone : "bg-gray-200 dark:bg-neutral-700")} />
+        ))}
+      </div>
+      <span className="text-xs text-gray-500">{n}/7</span>
+      {s.data_stale && (
+        <Badge tone="red" className="gap-1"><AlertTriangle className="h-3 w-3" />stale</Badge>
+      )}
+    </div>
+  );
+}
+
+function LatestCell({ s }) {
+  if (!s.registered) return dash;
+  const rel = relDay(s.last_data_date);
+  if (!rel) return <span className="text-xs text-red-600">none</span>;
+  return <span className={"whitespace-nowrap text-xs " + (s.data_stale ? "text-red-600" : "text-gray-500")}>{rel}</span>;
+}
+
 export default function SubjectsView({ studyId, canAdmin, guard }) {
   const [subjects, setSubjects] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -17,6 +96,20 @@ export default function SubjectsView({ studyId, canAdmin, guard }) {
   const [label, setLabel] = useState("");
   const [pid, setPid] = useState("");
   const [editing, setEditing] = useState(null); // subject being edited, or null
+  const [sort, setSort] = useState({ key: "linked", dir: "desc" }); // linked-first by default
+
+  const onSort = (k) =>
+    setSort((s) => (s.key === k ? { key: k, dir: s.dir === "asc" ? "desc" : "asc" } : { key: k, dir: DEFAULT_DIR[k] }));
+
+  const sorted = useMemo(() => {
+    const f = SORTERS[sort.key];
+    return [...subjects].sort((a, b) => {
+      const av = f(a), bv = f(b);
+      let c = av < bv ? -1 : av > bv ? 1 : 0;
+      if (c === 0) c = (a.entry_code || "").localeCompare(b.entry_code || "");
+      return sort.dir === "asc" ? c : -c;
+    });
+  }, [subjects, sort]);
 
   const load = useCallback(() => {
     if (studyId != null) guard(async () => setSubjects(await api.listSubjects(studyId)));
@@ -76,15 +169,18 @@ export default function SubjectsView({ studyId, canAdmin, guard }) {
               <tr>
                 <Th>Entry code</Th>
                 <Th>Study ID</Th>
-                <Th>Label</Th>
+                <SortTh label="Label" sortKey="label" sort={sort} onSort={onSort} />
                 <Th>Collection window</Th>
-                <Th>Status</Th>
-                <Th>Linked</Th>
+                <SortTh label="Status" sortKey="status" sort={sort} onSort={onSort} />
+                <SortTh label="Linked" sortKey="linked" sort={sort} onSort={onSort} />
+                <Th>Battery</Th>
+                <Th>Data (7d)</Th>
+                <Th>Latest</Th>
                 {canAdmin && <Th />}
               </tr>
             </thead>
             <tbody>
-              {subjects.map((s) => {
+              {sorted.map((s) => {
                 const win = windowLabel(s);
                 return (
                   <tr
@@ -101,6 +197,9 @@ export default function SubjectsView({ studyId, canAdmin, guard }) {
                     <Td className="whitespace-nowrap text-xs text-gray-500">{win || <span className="text-gray-300">—</span>}</Td>
                     <Td className="text-gray-500">{s.status}</Td>
                     <Td>{s.registered ? <Badge tone="green">linked</Badge> : <Badge>no</Badge>}</Td>
+                    <Td><BatteryCell s={s} /></Td>
+                    <Td><WeekDataCell s={s} /></Td>
+                    <Td><LatestCell s={s} /></Td>
                     {canAdmin && (
                       <Td className="text-right" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-3">
@@ -141,7 +240,7 @@ export default function SubjectsView({ studyId, canAdmin, guard }) {
                 );
               })}
               {subjects.length === 0 && (
-                <tr><td colSpan={canAdmin ? 7 : 6}><Empty>No subjects yet.</Empty></td></tr>
+                <tr><td colSpan={canAdmin ? 10 : 9}><Empty>No subjects yet.</Empty></td></tr>
               )}
             </tbody>
           </table>

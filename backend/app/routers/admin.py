@@ -10,7 +10,7 @@ from datetime import date, timedelta
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app import consolidation
@@ -686,6 +686,17 @@ def list_subjects(
     subjects = db.scalars(
         select(Subject).where(Subject.study_id == study_id).order_by(Subject.id)
     )
+    today = date.today()
+    week_ago = today - timedelta(days=6)
+    # A day "has data" if it carried any consolidated metric (a row alone isn't enough:
+    # consolidate writes an empty row for out-of-range / no-data days too).
+    has_data = or_(
+        DailyHealth.point_count > 0,
+        DailyHealth.steps.isnot(None),
+        DailyHealth.calories.isnot(None),
+        DailyHealth.sleep_minutes.isnot(None),
+        DailyHealth.hr_avg.isnot(None),
+    )
     out: list[SubjectStatusOut] = []
     for subj in subjects:
         acct = db.scalar(
@@ -696,8 +707,55 @@ def list_subjects(
         )
         item = SubjectStatusOut.model_validate(subj)
         item.registered = bool(acct and acct.registered)
+        if acct is not None:
+            _attach_health_summary(db, item, subj, acct.id, today, week_ago, has_data)
         out.append(item)
     return out
+
+
+def _attach_health_summary(db, item, subj, account_id, today, week_ago, has_data) -> None:
+    """Fill the list-view battery + data-freshness fields for one linked account."""
+    # Lowest-battery device (nulls last) — surfaces the most concerning one.
+    dev = db.scalar(
+        select(PairedDevice)
+        .where(PairedDevice.provider_account_id == account_id)
+        .order_by(PairedDevice.battery_level.is_(None), PairedDevice.battery_level.asc())
+    )
+    if dev is not None:
+        item.battery_level = dev.battery_level
+        item.battery_status = dev.battery_status
+        item.battery_low = dev.battery_status in ("Low", "Empty") or (
+            dev.battery_level is not None and dev.battery_level <= 20
+        )
+
+    item.last_data_date = db.scalar(
+        select(func.max(DailyHealth.local_date)).where(
+            DailyHealth.provider_account_id == account_id, has_data
+        )
+    )
+    item.days_with_data_7 = (
+        db.scalar(
+            select(func.count(func.distinct(DailyHealth.local_date))).where(
+                DailyHealth.provider_account_id == account_id,
+                DailyHealth.local_date >= week_ago,
+                DailyHealth.local_date <= today,
+                has_data,
+            )
+        )
+        or 0
+    )
+
+    # Stale only flags subjects we'd *expect* fresh data from: linked and inside their
+    # collection window (a closed/not-yet-started window makes "no recent data" expected).
+    in_window = not (
+        (subj.collection_end and subj.collection_end < today)
+        or (subj.collection_start and subj.collection_start > today)
+    )
+    item.data_stale = bool(
+        item.registered
+        and in_window
+        and (item.last_data_date is None or item.last_data_date < today - timedelta(days=2))
+    )
 
 
 # --- Researcher (user) management — superuser only ------------------------------
