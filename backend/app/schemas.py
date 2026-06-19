@@ -21,6 +21,7 @@ class StudyOut(BaseModel):
     ingest_intraday_hr: bool = False
     ingest_intraday_hrv: bool = False
     ingest_intraday_spo2: bool = False
+    ingest_intraday_activity: bool = False
     created_at: datetime | None
 
 
@@ -28,6 +29,7 @@ class StudyUpdate(BaseModel):
     ingest_intraday_hr: bool | None = None
     ingest_intraday_hrv: bool | None = None
     ingest_intraday_spo2: bool | None = None
+    ingest_intraday_activity: bool | None = None
 
 
 # --- Admin: subjects ------------------------------------------------------------

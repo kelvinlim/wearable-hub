@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     # Intraday heart-rate (opt-in per study) is downsampled to N-minute bucket averages before
     # storage (raw HR is 1000+ samples/day). Set 0 to store raw samples (heavy).
     hr_downsample_minutes: int = 5
+    # Intraday steps/distance (opt-in per study via `ingest_intraday_activity`) are integrated into
+    # N-minute SUM buckets (raw is 1-min, ~350/day each). Set 0 to store raw 1-min points.
+    steps_bucket_minutes: int = 5
+    # Intraday SpO2 (opt-in per study via `ingest_intraday_spo2`) is downsampled to N-minute
+    # average buckets (bucket min preserved in payload). Set 0 to store raw samples (~390/day).
+    spo2_downsample_minutes: int = 5
 
     # --- Project-level credentials for Tier-1 subscriber registration ---
     # Subscriber registration is a project op, NOT a user op (a subject's token gets 403).
