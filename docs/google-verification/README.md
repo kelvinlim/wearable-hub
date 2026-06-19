@@ -29,6 +29,7 @@ not.
 | [04-homepage-content.md](04-homepage-content.md) | Homepage copy (mirror of the live `/` page) |
 | [05-demo-video-script.md](05-demo-video-script.md) | Shot list for the required consent-flow demo video |
 | [06-in-app-disclosure.md](06-in-app-disclosure.md) | The prominent in-app disclosure string + placement |
+| [07-test-user-management.md](07-test-user-management.md) | Why test users / the audience can't be managed by API — Console-only |
 
 ## Study contact (filled in)
 
