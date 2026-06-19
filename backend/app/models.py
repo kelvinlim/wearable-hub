@@ -71,6 +71,9 @@ class Study(Base):
     # Opt-in: store raw intraday HRV / SpO2 samples (sleep-period, low-frequency — not downsampled).
     ingest_intraday_hrv: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     ingest_intraday_spo2: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Opt-in: store intraday steps/distance (downsampled to N-min sum buckets). Off by default —
+    # the daily totals come from dailyRollUp regardless, so intraday is only the within-day curve.
+    ingest_intraday_activity: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     created_by: Mapped["User | None"] = relationship(back_populates="studies")
@@ -243,6 +246,12 @@ class DailyHealth(Base):
     resting_hr: Mapped[int | None] = mapped_column()  # daily resting BPM
     hrv_ms: Mapped[float | None] = mapped_column(Float)  # daily HRV (avg ms)
     spo2_avg: Mapped[float | None] = mapped_column(Float)  # daily avg SpO2 % (typ. during sleep)
+    # Active Zone Minutes — Fitbit-weighted total (fat-burn x1 + cardio/peak x2). Per-zone minutes
+    # live in metrics["active_zone_minutes"]. Pull-only daily rollup (not intraday/subscribable).
+    azm_total: Mapped[int | None] = mapped_column()
+    # Moderate-to-Vigorous Physical Activity minutes (moderate + vigorous) from the active-minutes
+    # rollup. Per-level minutes (light/moderate/vigorous) live in metrics["active_minutes"].
+    mvpa_minutes: Mapped[int | None] = mapped_column()
 
     metrics: Mapped[dict | None] = mapped_column(JSON)
     point_count: Mapped[int] = mapped_column(default=0, nullable=False)

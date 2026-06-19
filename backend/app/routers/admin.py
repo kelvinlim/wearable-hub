@@ -113,6 +113,8 @@ def update_study(
         study.ingest_intraday_hrv = payload.ingest_intraday_hrv
     if payload.ingest_intraday_spo2 is not None:
         study.ingest_intraday_spo2 = payload.ingest_intraday_spo2
+    if payload.ingest_intraday_activity is not None:
+        study.ingest_intraday_activity = payload.ingest_intraday_activity
     db.commit()
     db.refresh(study)
     return study
@@ -482,6 +484,8 @@ def list_daily(
             "resting_hr": r.resting_hr,
             "hrv_ms": r.hrv_ms,
             "spo2_avg": r.spo2_avg,
+            "azm_total": r.azm_total,
+            "mvpa_minutes": r.mvpa_minutes,
             "point_count": r.point_count,
             "metrics": r.metrics,
         }
@@ -505,6 +509,12 @@ def _point_to_dict(r: HealthDataPoint) -> dict:
             for s in stages
             if isinstance(s, dict)
         ]
+    elif isinstance(r.payload, dict):
+        # Downsampled buckets (steps/distance sum, SpO2 avg) carry aggregation metadata; surface
+        # the sample count and, for SpO2, the bucket minimum (desaturation nadir) alongside `value`.
+        for k in ("samples", "bucket_minutes", "spo2_min", "spo2_avg"):
+            if k in r.payload:
+                item[k] = r.payload[k]
     return item
 
 
@@ -639,6 +649,8 @@ def _subject_export_payload(
             "resting_hr": d.resting_hr,
             "hrv_ms": d.hrv_ms,
             "spo2_avg": d.spo2_avg,
+            "azm_total": d.azm_total,
+            "mvpa_minutes": d.mvpa_minutes,
             "metrics": d.metrics,
             "point_count": d.point_count,
             "points": by_day.get(d.local_date, []),

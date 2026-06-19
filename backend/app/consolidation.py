@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -363,6 +363,27 @@ def pull_points(
     return out
 
 
+def _probe_tz_offset(token: str, d: date) -> int | None:
+    """One-request probe for the local UTC offset on day `d`, via a single `steps` point.
+
+    Used to anchor intraday HR/HRV/SpO2 windows when no list points were stored that day (e.g.
+    intraday activity is off, so steps/distance aren't pulled)."""
+    nxt = d + timedelta(days=1)
+    flt = (
+        f'steps.interval.civil_start_time >= "{d.isoformat()}" '
+        f'AND steps.interval.civil_start_time < "{nxt.isoformat()}"'
+    )
+    url = f"{_BASE}/users/me/dataTypes/steps/dataPoints"
+    r = httpx.get(url, params={"filter": flt, "pageSize": "1"}, headers=_auth(token), timeout=_TIMEOUT)
+    r.raise_for_status()
+    for dp in r.json().get("dataPoints") or []:
+        vo = dp.get("steps") or {}
+        off = _offset_seconds((vo.get("interval") or {}).get("startUtcOffset"))
+        if off is not None:
+            return off
+    return None
+
+
 # --- aggregation ----------------------------------------------------------------
 
 def _point_interval(dp: dict, value_obj: dict) -> tuple[datetime | None, datetime | None, int | None]:
@@ -493,6 +514,128 @@ def _upsert_sample_point(
     row.payload = dp
 
 
+def bucket_sum_points(points: list[dict], read_id: str, bucket_min: int) -> list[dict]:
+    """Integrate summable 1-min list points (steps/distance) into `bucket_min`-minute SUM buckets.
+
+    Returns [{start, end, sum, n, off}] sorted by start. `bucket_min <= 0` keeps each point as its
+    own 1-min bucket (passthrough). Mirrors the bucketing math in `pull_intraday_hr`."""
+    parsed: list[tuple[datetime, float, int | None]] = []
+    for dp in points:
+        vo = dp.get(read_id) or {}
+        if not isinstance(vo, dict):
+            continue
+        start, _end, off = _point_interval(dp, vo)
+        val = _first_number({k: v for k, v in vo.items() if k not in ("interval", "sampleTime")})
+        if start is None or val is None:
+            continue
+        parsed.append((start, val, off))
+
+    if bucket_min <= 0:
+        return [
+            {"start": s, "end": s + timedelta(minutes=1), "sum": v, "n": 1, "off": o}
+            for s, v, o in parsed
+        ]
+
+    bsec = bucket_min * 60
+    buckets: dict[int, list] = {}  # epoch -> [sum, n, off]
+    for s, v, o in parsed:
+        epoch = int((s - _EPOCH).total_seconds())
+        k = epoch - (epoch % bsec)
+        b = buckets.get(k)
+        if b is None:
+            buckets[k] = [v, 1, o]
+        else:
+            b[0] += v
+            b[1] += 1
+            if b[2] is None:
+                b[2] = o
+    out = []
+    for k in sorted(buckets):
+        total, n, off = buckets[k]
+        start = datetime.fromtimestamp(k, timezone.utc).replace(tzinfo=None)
+        out.append(
+            {"start": start, "end": start + timedelta(seconds=bsec),
+             "sum": round(total, 2), "n": n, "off": off}
+        )
+    return out
+
+
+def bucket_samples_avg_min(
+    pts: list[dict], value_key: str, scalar_key: str, bucket_min: int
+) -> list[dict]:
+    """Downsample instantaneous samples (SpO2) into `bucket_min`-minute buckets, keeping both the
+    average and the bucket minimum (desaturation nadir). Returns [{start, end, avg, min, n, off}]."""
+    bsec = bucket_min * 60
+    buckets: dict[int, list] = {}  # epoch -> [sum, min, n, off]
+    for dp in pts:
+        vo = dp.get(value_key) or {}
+        st = vo.get("sampleTime") or {}
+        t = _parse_iso(st.get("physicalTime"))
+        val = _num(vo.get(scalar_key))
+        if t is None or val is None:
+            continue
+        off = _offset_seconds(st.get("utcOffset"))
+        epoch = int((t - _EPOCH).total_seconds())
+        k = epoch - (epoch % bsec)
+        b = buckets.get(k)
+        if b is None:
+            buckets[k] = [val, val, 1, off]
+        else:
+            b[0] += val
+            b[1] = min(b[1], val)
+            b[2] += 1
+            if b[3] is None:
+                b[3] = off
+    out = []
+    for k in sorted(buckets):
+        total, mn, n, off = buckets[k]
+        start = datetime.fromtimestamp(k, timezone.utc).replace(tzinfo=None)
+        out.append(
+            {"start": start, "end": start + timedelta(seconds=bsec),
+             "avg": round(total / n, 1), "min": round(mn, 1), "n": n, "off": off}
+        )
+    return out
+
+
+def _upsert_value_bucket(
+    db: Session, account_id: int, datatype: str, d: date, bkt: dict, value, payload: dict
+) -> None:
+    """Upsert one aggregated bucket (steps/distance sum, SpO2 avg) as a HealthDataPoint."""
+    point_key = f"{datatype}|{bkt['start'].isoformat()}"
+    row = db.scalar(
+        select(HealthDataPoint).where(
+            HealthDataPoint.provider_account_id == account_id,
+            HealthDataPoint.datatype == datatype,
+            HealthDataPoint.point_key == point_key,
+        )
+    )
+    if row is None:
+        row = HealthDataPoint(provider_account_id=account_id, datatype=datatype, point_key=point_key)
+        db.add(row)
+        db.flush()  # see _upsert_point: flush so same-run duplicate buckets update, not re-add
+    row.local_date = d
+    row.start_time = bkt["start"]
+    row.end_time = bkt["end"]
+    row.tz_offset_seconds = bkt.get("off") or 0
+    row.value = value
+    row.payload = payload
+
+
+def _replace_points_for_day(db: Session, account_id: int, datatype: str, d: date) -> None:
+    """Delete existing intraday points for (account, datatype, local day) before re-inserting.
+
+    Makes consolidation self-cleaning across granularity changes (e.g. switching raw 1-min steps to
+    5-min buckets, or disabling intraday) and keeps re-runs idempotent."""
+    db.execute(
+        delete(HealthDataPoint).where(
+            HealthDataPoint.provider_account_id == account_id,
+            HealthDataPoint.datatype == datatype,
+            HealthDataPoint.local_date == d,
+        )
+    )
+    db.flush()
+
+
 def _upsert_paired_device(db: Session, account_id: int, dev: dict) -> None:
     """Upsert one PairedDevice snapshot row (keyed by the Google resource `name`)."""
     name = dev.get("name") or dev.get("macAddress")
@@ -584,6 +727,10 @@ def consolidate_day(db: Session, account: ProviderAccount, d: date) -> Consolida
     tz_off: int | None = None
     point_count = 0
 
+    settings = get_settings()
+    subj = db.get(Subject, account.subject_id)
+    study = db.get(Study, subj.study_id) if subj else None
+
     # Each metric is pulled independently and fault-isolated: the dataPoints API supports
     # different methods per dataType (e.g. height isn't rollup-able, floors/calories aren't
     # listable), so one type's 4xx must not fail the whole day. Failures are recorded but skipped.
@@ -605,26 +752,53 @@ def consolidate_day(db: Session, account: ProviderAccount, d: date) -> Consolida
                 errors[f"{name}:rollup"] = exc.response.status_code
                 log.warning("rollup %s failed: %s %s", name, exc.response.status_code, exc.response.text[:120])
         # Raw points (+ sleep aggregation) via list.
-        if spec.list_:
+        if not spec.list_:
+            continue
+        # Steps/distance: intraday is OPT-IN per study (the daily totals come from the rollup
+        # above regardless). When off, skip the pull and clear any previously stored points; when
+        # on, integrate the 1-min points into N-minute SUM buckets before storing.
+        if name in ("steps", "distance"):
+            if not (study and study.ingest_intraday_activity):
+                _replace_points_for_day(db, account.id, name, d)
+                continue
             try:
                 points = pull_points(
                     token, spec.read_id, d, page_size=spec.page_size, filterable=spec.filterable
                 )
-                point_count += len(points)
-                for dp in points:
-                    _upsert_point(db, account.id, name, d, dp)
-                    if tz_off is None:
-                        vo = dp.get(spec.read_id) or {}
-                        tz_off = _offset_seconds((vo.get("interval") or {}).get("startUtcOffset"))
-                if name == "sleep" and points:
-                    s = aggregate_sleep(points)
-                    metrics["sleep"] = s
-                    typed["sleep_minutes"] = s["asleep_min"]
-                elif name == "exercise":
-                    metrics["exercise"] = {"count": len(points)}
+                bucket_min = settings.steps_bucket_minutes
+                buckets = bucket_sum_points(points, spec.read_id, bucket_min)
+                _replace_points_for_day(db, account.id, name, d)
+                for bkt in buckets:
+                    _upsert_value_bucket(
+                        db, account.id, name, d, bkt, bkt["sum"],
+                        {"sum": bkt["sum"], "samples": bkt["n"], "bucket_minutes": bucket_min},
+                    )
+                    if tz_off is None and bkt.get("off") is not None:
+                        tz_off = bkt["off"]
+                point_count += len(buckets)
             except httpx.HTTPStatusError as exc:
                 errors[f"{name}:list"] = exc.response.status_code
                 log.warning("list %s failed: %s %s", name, exc.response.status_code, exc.response.text[:120])
+            continue
+        try:
+            points = pull_points(
+                token, spec.read_id, d, page_size=spec.page_size, filterable=spec.filterable
+            )
+            point_count += len(points)
+            for dp in points:
+                _upsert_point(db, account.id, name, d, dp)
+                if tz_off is None:
+                    vo = dp.get(spec.read_id) or {}
+                    tz_off = _offset_seconds((vo.get("interval") or {}).get("startUtcOffset"))
+            if name == "sleep" and points:
+                s = aggregate_sleep(points)
+                metrics["sleep"] = s
+                typed["sleep_minutes"] = s["asleep_min"]
+            elif name == "exercise":
+                metrics["exercise"] = {"count": len(points)}
+        except httpx.HTTPStatusError as exc:
+            errors[f"{name}:list"] = exc.response.status_code
+            log.warning("list %s failed: %s %s", name, exc.response.status_code, exc.response.text[:120])
 
     # Heart rate + HRV — pull-only (NOT webhook-subscribable). heart-rate has a daily rollup
     # (avg/min/max BPM); resting-HR and HRV are day-keyed list types. Fault-isolated.
@@ -668,13 +842,56 @@ def consolidate_day(db: Session, account: ProviderAccount, d: date) -> Consolida
     except httpx.HTTPStatusError as exc:
         errors["spo2:list"] = exc.response.status_code
 
+    # Active Zone Minutes — pull-only daily rollup (NOT listable/subscribable). Per-zone minutes;
+    # Fitbit weights fat-burn x1 and cardio/peak x2 for the headline total. Fault-isolated.
+    try:
+        azm = pull_daily_rollup(token, "active-zone-minutes", d)
+        if azm:
+            cardio = _to_int(azm.get("sumInCardioHeartZone")) or 0
+            peak = _to_int(azm.get("sumInPeakHeartZone")) or 0
+            fat_burn = _to_int(azm.get("sumInFatBurnHeartZone")) or 0
+            total = fat_burn + 2 * (cardio + peak)
+            metrics["active_zone_minutes"] = {
+                "cardio": cardio, "peak": peak, "fat_burn": fat_burn, "total": total,
+            }
+            typed["azm_total"] = total
+    except httpx.HTTPStatusError as exc:
+        errors["active_zone_minutes:rollup"] = exc.response.status_code
+
+    # Active minutes by activity level — pull-only daily rollup. Headline is MVPA
+    # (moderate + vigorous, the public-health standard); per-level minutes kept in metrics.
+    try:
+        am = pull_daily_rollup(token, "active-minutes", d)
+        if am:
+            levels: dict[str, int] = {}
+            for it in am.get("activeMinutesRollupByActivityLevel") or []:
+                lvl = (it.get("activityLevel") or "").lower()
+                mins = _to_int(it.get("activeMinutesSum"))
+                if lvl and mins is not None:
+                    levels[lvl] = mins
+            if levels:
+                mvpa = levels.get("moderate", 0) + levels.get("vigorous", 0)
+                metrics["active_minutes"] = {**levels, "mvpa": mvpa}
+                typed["mvpa_minutes"] = mvpa
+    except httpx.HTTPStatusError as exc:
+        errors["active_minutes:rollup"] = exc.response.status_code
+
+    # Intraday HR/HRV/SpO2 windows are anchored on local-day midnight, so they need the day's UTC
+    # offset. It's normally captured from the list points above, but when intraday activity is off
+    # (steps/distance not pulled) fall back to a one-point probe so the window stays correct.
+    if tz_off is None and study and (
+        study.ingest_intraday_hr or study.ingest_intraday_hrv or study.ingest_intraday_spo2
+    ):
+        try:
+            tz_off = _probe_tz_offset(token, d)
+        except httpx.HTTPStatusError:
+            pass
+
     # Intraday heart rate — OPT-IN per study, downsampled to N-minute buckets (raw HR is
     # 1000+ samples/day). Stored as `heart_rate` points so they show in the day expansion + export.
-    subj = db.get(Subject, account.subject_id)
-    study = db.get(Study, subj.study_id) if subj else None
     if study and study.ingest_intraday_hr:
         try:
-            bucket_min = get_settings().hr_downsample_minutes
+            bucket_min = settings.hr_downsample_minutes
             buckets = pull_intraday_hr(token, d, tz_off, bucket_min)
             for bkt in buckets:
                 _upsert_hr_bucket(db, account.id, d, bkt, tz_off or 0, bucket_min)
@@ -686,9 +903,11 @@ def consolidate_day(db: Session, account: ProviderAccount, d: date) -> Consolida
         except httpx.HTTPStatusError as exc:
             errors["heart_rate:intraday"] = exc.response.status_code
 
-    # Intraday HRV / SpO2 — OPT-IN per study, stored raw (sleep-period, low-frequency). Each
-    # lands as `heart_rate_variability` / `oxygen_saturation` points (day expansion + export).
+    # Intraday HRV / SpO2 — OPT-IN per study. HRV is ~5-min already → stored raw; SpO2 is ~1-min
+    # → downsampled to N-min avg buckets (with bucket min). Each lands as
+    # `heart_rate_variability` / `oxygen_saturation` points (day expansion + export).
     if study:
+        spo2_bucket_min = settings.spo2_downsample_minutes
         for dt, enabled in (
             ("heart_rate_variability", study.ingest_intraday_hrv),
             ("oxygen_saturation", study.ingest_intraday_spo2),
@@ -698,10 +917,24 @@ def consolidate_day(db: Session, account: ProviderAccount, d: date) -> Consolida
             read_id, value_key, scalar_key = INTRADAY_SAMPLE_TYPES[dt]
             try:
                 pts = pull_intraday_samples(token, read_id, d, tz_off)
-                for dp in pts:
-                    _upsert_sample_point(db, account.id, dt, value_key, scalar_key, d, dp)
-                point_count += len(pts)
-                metrics.setdefault("intraday", {})[dt] = len(pts)
+                # SpO2 is ~1-min during sleep (~390/day): downsample to N-min avg buckets, keeping
+                # the bucket minimum (desaturation nadir). HRV is already ~5-min — stored raw.
+                if dt == "oxygen_saturation" and spo2_bucket_min > 0:
+                    buckets = bucket_samples_avg_min(pts, value_key, scalar_key, spo2_bucket_min)
+                    _replace_points_for_day(db, account.id, dt, d)
+                    for bkt in buckets:
+                        _upsert_value_bucket(
+                            db, account.id, dt, d, bkt, bkt["avg"],
+                            {"spo2_avg": bkt["avg"], "spo2_min": bkt["min"],
+                             "samples": bkt["n"], "bucket_minutes": spo2_bucket_min},
+                        )
+                    point_count += len(buckets)
+                    metrics.setdefault("intraday", {})[dt] = len(buckets)
+                else:
+                    for dp in pts:
+                        _upsert_sample_point(db, account.id, dt, value_key, scalar_key, d, dp)
+                    point_count += len(pts)
+                    metrics.setdefault("intraday", {})[dt] = len(pts)
             except httpx.HTTPStatusError as exc:
                 errors[f"{dt}:intraday"] = exc.response.status_code
 
@@ -744,6 +977,8 @@ def _upsert_daily(db, account, d, typed, metrics, point_count, tz_off) -> None:
     row.resting_hr = typed.get("resting_hr")
     row.hrv_ms = typed.get("hrv_ms")
     row.spo2_avg = typed.get("spo2_avg")
+    row.azm_total = typed.get("azm_total")
+    row.mvpa_minutes = typed.get("mvpa_minutes")
     row.metrics = metrics
     row.point_count = point_count
     row.pulled_at = datetime.utcnow()

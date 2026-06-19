@@ -78,6 +78,7 @@ function IntradayFlags({ study }) {
     study.ingest_intraday_hr && "HR",
     study.ingest_intraday_hrv && "HRV",
     study.ingest_intraday_spo2 && "SpO₂",
+    study.ingest_intraday_activity && "Activity",
   ].filter(Boolean);
   if (!on.length) return <span className="text-gray-300">off</span>;
   return (
@@ -90,7 +91,8 @@ function IntradayFlags({ study }) {
 const INTRADAY_OPTS = [
   { key: "ingest_intraday_hr", label: "heart rate (downsampled)" },
   { key: "ingest_intraday_hrv", label: "HRV (raw sleep samples)" },
-  { key: "ingest_intraday_spo2", label: "SpO₂ (raw sleep samples)" },
+  { key: "ingest_intraday_spo2", label: "SpO₂ (downsampled, avg + min)" },
+  { key: "ingest_intraday_activity", label: "steps + distance (downsampled sums)" },
 ];
 
 function SettingsCard({ study, canAdmin, guard, onChanged }) {

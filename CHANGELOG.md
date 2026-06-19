@@ -259,6 +259,30 @@ schema; tokens encrypted at rest. Researcher auth/RBAC and Garmin are deferred.
   stored refresh token succeeds.
 - **Pull data read works** — `GET /v4/users/me/dataTypes/steps/dataPoints` with the subject's
   user token returns real Fitbit data (Charge 6, live step intervals).
+- **Active Zone Minutes available as a daily rollup (verified 2026-06-18).** dataType
+  `active-zone-minutes` → `dailyRollUp` returns `activeZoneMinutes` with `sumInCardioHeartZone` /
+  `sumInPeakHeartZone` / `sumInFatBurnHeartZone` (string ints; real data, e.g. 06-05 = 48/4/79).
+  It is **pull-only** (not webhook-subscribable) and **not listable** — an intraday `list` filter
+  returns `400 INVALID_DATA_POINT_FILTER_DATA_TYPE_RESTRICTION`, so it's a daily summary only.
+  Stored as `daily_health.azm_total` (Fitbit-weighted: fat-burn ×1 + cardio/peak ×2) with the
+  per-zone breakdown in `metrics.active_zone_minutes`.
+- **Active minutes by activity level available as a daily rollup (verified 2026-06-18).** dataType
+  `active-minutes` → `dailyRollUp` returns `activeMinutes.activeMinutesRollupByActivityLevel`, a
+  list of `{activityLevel: LIGHT|MODERATE|VIGOROUS, activeMinutesSum}` (string ints; e.g. 06-05 =
+  368/25/5). Pull-only daily rollup; a multi-day range errors `INVALID_ROLLUP_QUERY_DURATION`, so
+  it's pulled per day like the others. Stored as `daily_health.mvpa_minutes` (moderate + vigorous,
+  the public-health MVPA standard) with the per-level breakdown in `metrics.active_minutes`.
+- **`dailyRollUp` is daily-granularity only (verified 2026-06-18).** The
+  `dataPoints:dailyRollUp` request schema accepts **only** `range` — probing `bucketByTime`
+  (Google-Fit-style) and `period` both return `400 INVALID_ARGUMENT` *"Cannot find field"*. A
+  multi-day `range` returns **one `rollupDataPoint` per civil day** (3-day range → 3 points;
+  HR → per-day avg/min/max). So there is **no single-call sub-daily (hourly/5-min) bucketing** —
+  intraday curves still require pulling raw points + client-side downsampling. The civil bounds
+  *do* accept a `time` component, so an **arbitrary time window is summed** (06-01 `00:00–06:00`
+  → `countSum 355`), but only one aggregate per call — emulating N intraday buckets would cost N
+  calls/day, far more than one `list` page. Confirmed rollup == stored daily total (steps
+  `countSum 9264` == the day's `daily_health.steps`). Implication: rollup's storage lever is
+  *dropping* intraday step/distance points (keep the daily total only), not finer buckets.
 - **AUTOMATIC behavior (verified):**
   - Subscriptions are created on a **fresh authorization grant only** — re-consenting an
     existing grant does nothing; the grant must be revoked first (we revoke via

@@ -57,7 +57,7 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
       else download(`${base}-points.csv`, "text/csv", pointsCsv(data));
     });
 
-  const HEAD = ["Date", "Steps", "Dist (m)", "Cal", "Floors", "Sleep", "HR avg", "Rest HR", "HRV", "SpO₂", "Pts"];
+  const HEAD = ["Date", "Steps", "Dist (m)", "Cal", "Floors", "Sleep", "HR avg", "Rest HR", "HRV", "SpO₂", "AZM", "MVPA", "Pts"];
 
   return (
     <Card className="overflow-hidden">
@@ -147,6 +147,8 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
                   <Td>{cell(d.resting_hr)}</Td>
                   <Td>{cell(d.hrv_ms)}</Td>
                   <Td>{cell(d.spo2_avg)}</Td>
+                  <Td>{cell(d.azm_total)}</Td>
+                  <Td>{cell(d.mvpa_minutes)}</Td>
                   <Td className="text-gray-400">{d.point_count}</Td>
                 </tr>
                 {openDay === d.date && (
