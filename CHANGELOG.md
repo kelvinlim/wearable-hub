@@ -4,7 +4,7 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
-## [Unreleased]
+## [0.2.0] — 2026-06-18
 
 ### Added
 
