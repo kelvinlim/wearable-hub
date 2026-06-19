@@ -9,7 +9,7 @@ from app.routers import admin, auth, enroll, public, webhooks
 
 settings = get_settings()
 
-app = FastAPI(title=settings.app_name)
+app = FastAPI(title=settings.app_name, version=settings.app_version)
 
 app.include_router(auth.router)
 app.include_router(admin.router)
@@ -41,6 +41,7 @@ def health() -> dict:
     return {
         "status": "ok",
         "app": settings.app_name,
+        "version": settings.app_version,
         "env": settings.environment,
         "db": db_ok,
         "google_config": google_config,

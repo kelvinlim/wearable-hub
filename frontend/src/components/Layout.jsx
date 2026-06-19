@@ -60,7 +60,10 @@ export default function Layout({
           {open && (
             <div className="flex flex-col leading-tight">
               <span className="font-display text-lg font-bold tracking-tight">Wearable Hub</span>
-              <span className="text-[10px] uppercase tracking-widest text-white/60">Research console</span>
+              <span className="flex items-baseline gap-1.5 text-[10px] uppercase tracking-widest text-white/60">
+                Research console
+                <span className="tracking-normal normal-case text-white/40">v{__APP_VERSION__}</span>
+              </span>
             </div>
           )}
         </div>

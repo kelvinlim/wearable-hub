@@ -10,6 +10,7 @@ class Settings(BaseSettings):
 
     # --- App ---
     app_name: str = "Wearable Hub"
+    app_version: str = "0.2.0"  # keep in sync with backend/pyproject.toml + frontend/package.json
     environment: str = "dev"  # dev | prod
 
     # --- Database ---
