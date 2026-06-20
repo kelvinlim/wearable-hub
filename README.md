@@ -76,15 +76,18 @@ podman-compose up -d       # backend (:8010) + scheduler + frontend (:8020)
 ```
 
 **Production (lnpitask.umn.edu)** runs the same images under Podman **Quadlets** (native
-systemd integration, auto-restart on boot) — not compose. After editing code:
+systemd integration, auto-restart on boot) — not compose. After checking out the commit/tag to
+ship, deploy from the host with the helper (rebuilds images, restarts services — the backend's
+startup runs `alembic upgrade head` — and health-checks):
 
 ```bash
-sudo -E podman build -t localhost/wearable-backend:latest ./backend
-sudo -E podman build -t localhost/wearable-frontend:latest ./frontend
-sudo systemctl restart wearable-backend.service wearable-scheduler.service wearable-frontend.service
+scripts/deploy.sh            # all (backend + scheduler + frontend)
+scripts/deploy.sh backend    # backend + scheduler only
 ```
 
-Quadlet sources: [deploy/quadlet/](deploy/quadlet/) (installed to `/etc/containers/systemd/`).
+It wraps the underlying steps (`sudo -E podman build …` for each image + `sudo systemctl restart
+wearable-*.service`); run those by hand if you prefer. Quadlet sources:
+[deploy/quadlet/](deploy/quadlet/) (installed to `/etc/containers/systemd/`).
 Logs: `sudo journalctl -u wearable-backend.service -f`. The `docker-compose.yml` is kept for
 local development only.
 
@@ -104,6 +107,38 @@ Required config: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_HEALTH_SCOP
 
 In Google Cloud Console: enable the Google Health API, create a **Web** OAuth client, add
 your callback as an authorized redirect URI, add test users, and select the Health scopes.
+
+## Versioning & releasing
+
+The app version lives in three files that must stay in sync —
+`backend/pyproject.toml`, `backend/app/config.py` (`app_version`, which feeds
+`FastAPI(version=)` and `GET /health`), and `frontend/package.json` (injected into the UI via a
+Vite define, shown in the console header next to "Research console"). Use the helper rather than
+editing them by hand:
+
+```bash
+scripts/bump-version.sh 0.3.0     # set all three
+scripts/bump-version.sh --check   # verify they match (exit 1 on drift)
+```
+
+**Cut a release:**
+
+```bash
+scripts/bump-version.sh 0.3.0                 # 1. bump the three files
+$EDITOR CHANGELOG.md                          # 2. move [Unreleased] -> [0.3.0]
+git commit -am "Release v0.3.0"               # 3. commit (via PR to main)
+git tag -a v0.3.0 -m "v0.3.0"                 # 4. tag the merge commit on main
+git push --follow-tags                        # 5. push commit + tag
+scripts/deploy.sh                             # 6. on lnpitask: build images + restart
+```
+
+**CI** ([.github/workflows/](.github/workflows/)):
+
+- `ci.yml` — on every PR / push to `main`: `bump-version.sh --check` (version drift), backend
+  `py_compile`, and a frontend build.
+- `release.yml` — on a pushed `vX.Y.Z` tag: verifies the tag matches the in-repo version, then
+  cuts a GitHub Release with auto-generated notes. (Image build + restart stays host-local via
+  `scripts/deploy.sh` — GitHub-hosted runners can't reach lnpitask.)
 
 ## Prior art (reference, symlinked)
 
