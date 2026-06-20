@@ -1,0 +1,33 @@
+name: Release
+
+# On a pushed `vX.Y.Z` tag: verify the tag matches the in-repo app version, then cut a
+# GitHub Release with auto-generated notes. The actual image build + service restart happens
+# on the prod host (lnpitask, Podman Quadlets) via `scripts/deploy.sh` — see README.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify tag matches app version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          scripts/bump-version.sh --check
+          got=$(sed -nE 's/.*"version": "([^"]*)".*/\1/p' frontend/package.json | head -1)
+          if [ "$tag" != "$got" ]; then
+            echo "::error::tag v$tag does not match app version $got (run scripts/bump-version.sh $tag)"
+            exit 1
+          fi
+          echo "tag and app version agree: $got"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
