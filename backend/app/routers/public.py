@@ -21,6 +21,7 @@ router = APIRouter(tags=["public"])
 # (e.g. Garmin Connect Developer's required "branding image") can resolve it on
 # our verified domain. Baked into the backend image via `COPY . .`.
 BRANDING_IMAGE = Path(__file__).resolve().parent.parent / "assets" / "branding.png"
+BRANDING_IMAGE_JPG = Path(__file__).resolve().parent.parent / "assets" / "branding.jpg"
 
 # Bump when the policy text changes (Google expects a dated, versioned policy).
 PRIVACY_LAST_UPDATED = "June 18, 2026"
@@ -67,6 +68,12 @@ def homepage() -> HTMLResponse:
 def branding_image() -> FileResponse:
     """Branding icon for external developer-portal registration (Garmin, etc.)."""
     return FileResponse(BRANDING_IMAGE, media_type="image/png")
+
+
+@router.get("/branding.jpg", include_in_schema=False)
+def branding_image_jpg() -> FileResponse:
+    """JPEG variant — Garmin's branding-image validator rejects the PNG."""
+    return FileResponse(BRANDING_IMAGE_JPG, media_type="image/jpeg")
 
 
 @router.get("/privacy", response_class=HTMLResponse)
