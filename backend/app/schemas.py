@@ -129,6 +129,9 @@ class UserOut(BaseModel):
 class MemberCreate(BaseModel):
     email: str
     role: str = "member"  # 'admin' | 'member'
+    # Only used when onboarding a researcher who isn't in the system yet (auto-created as a
+    # non-superuser). Ignored when the email already matches an existing researcher.
+    name: str | None = None
 
 
 class MemberOut(BaseModel):

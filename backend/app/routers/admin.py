@@ -1008,6 +1008,23 @@ def list_members(
     return [MemberOut(user_id=u.id, email=u.email, name=u.name, role=role) for u, role in rows]
 
 
+@router.get("/studies/{study_id}/assignable-users", response_model=list[UserOut])
+def list_assignable_users(
+    study_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> list[User]:
+    """Researchers a study admin can add to this study — i.e. those not already members.
+
+    Study-admin scoped (not a global directory): only this study's admins/superusers can read it.
+    Feeds the 'add staff' pulldown in the console."""
+    if db.get(Study, study_id) is None:
+        raise HTTPException(status_code=404, detail="Study not found")
+    assert_study_admin(db, user, study_id)
+    member_ids = select(StudyMembership.user_id).where(StudyMembership.study_id == study_id)
+    return list(
+        db.scalars(select(User).where(User.id.not_in(member_ids)).order_by(User.email))
+    )
+
+
 @router.post("/studies/{study_id}/members", response_model=MemberOut, status_code=201)
 def add_member(
     study_id: int,
@@ -1020,11 +1037,16 @@ def add_member(
     assert_study_admin(db, user, study_id)
     if payload.role not in ("admin", "member"):
         raise HTTPException(status_code=400, detail="role must be 'admin' or 'member'")
-    target = db.scalar(select(User).where(User.email == payload.email.strip().lower()))
+    email = payload.email.strip().lower()
+    if not email:
+        raise HTTPException(status_code=400, detail="email required")
+    target = db.scalar(select(User).where(User.email == email))
     if target is None:
-        raise HTTPException(
-            status_code=404, detail="No such researcher — add them via POST /admin/users first"
-        )
+        # Onboard a brand-new researcher. Always a non-superuser — a study admin must never be able
+        # to mint a superuser (that stays on the superuser-only POST /admin/users path).
+        target = User(email=email, name=payload.name, is_superuser=False)
+        db.add(target)
+        db.flush()
     m = db.scalar(
         select(StudyMembership).where(
             StudyMembership.user_id == target.id, StudyMembership.study_id == study_id

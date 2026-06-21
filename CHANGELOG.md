@@ -4,6 +4,18 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
+## [0.3.2] — 2026-06-21
+
+### Changed
+
+- **Study admins can onboard + assign research staff via a pulldown.** The study "Research staff"
+  card now offers a dropdown of assignable researchers (those not already members) plus an
+  "➕ Add new researcher…" option to onboard someone by email. New endpoint
+  `GET /admin/studies/{id}/assignable-users` (study-admin scoped). `add_member` now **auto-creates**
+  a researcher when the email is new — always as a **non-superuser** (minting superusers stays on
+  the superuser-only `POST /admin/users` path). Previously a study admin couldn't add anyone who
+  wasn't already allowlisted by a superuser. `MemberCreate` gains an optional `name`.
+
 ## [0.3.1] — 2026-06-21
 
 ### Changed
