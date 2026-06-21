@@ -67,19 +67,22 @@ def homepage() -> HTMLResponse:
     return page("Wearable Hub", body)
 
 
-@router.get("/branding.png", include_in_schema=False)
+# GET+HEAD: Garmin's branding-image validator probes the URL with a HEAD
+# request first; a GET-only route 405s on HEAD and Garmin reports "Invalid
+# Branding Image". The legacy Flask /garminrec/icon answers HEAD, so it passed.
+@router.api_route("/branding.png", methods=["GET", "HEAD"], include_in_schema=False)
 def branding_image() -> FileResponse:
     """Branding icon for external developer-portal registration (Garmin, etc.)."""
     return FileResponse(BRANDING_IMAGE, media_type="image/png")
 
 
-@router.get("/branding.jpg", include_in_schema=False)
+@router.api_route("/branding.jpg", methods=["GET", "HEAD"], include_in_schema=False)
 def branding_image_jpg() -> FileResponse:
-    """JPEG variant — Garmin's branding-image validator rejects the PNG."""
+    """JPEG variant of the branding icon."""
     return FileResponse(BRANDING_IMAGE_JPG, media_type="image/jpeg")
 
 
-@router.get("/icon", include_in_schema=False)
+@router.api_route("/icon", methods=["GET", "HEAD"], include_in_schema=False)
 def branding_icon() -> FileResponse:
     """Extension-less branding icon mirroring the proven /garminrec/icon route."""
     return FileResponse(BRANDING_ICON, media_type="image/png")
