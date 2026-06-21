@@ -8,12 +8,19 @@ mirror of `docs/google-verification/03-privacy-policy.md` — keep the two in sy
 Contact / PI / IRB details are constants below — update them if the study contact changes.
 """
 
+from pathlib import Path
+
 from fastapi import APIRouter
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
 from app.branding import page
 
 router = APIRouter(tags=["public"])
+
+# 150x150 UMN icon hosted at a stable root URL so external developer portals
+# (e.g. Garmin Connect Developer's required "branding image") can resolve it on
+# our verified domain. Baked into the backend image via `COPY . .`.
+BRANDING_IMAGE = Path(__file__).resolve().parent.parent / "assets" / "branding.png"
 
 # Bump when the policy text changes (Google expects a dated, versioned policy).
 PRIVACY_LAST_UPDATED = "June 18, 2026"
@@ -54,6 +61,12 @@ def homepage() -> HTMLResponse:
         f"<p class='muted'>Questions? Contact the study team at {SUPPORT_EMAIL}.</p>"
     )
     return page("Wearable Hub", body)
+
+
+@router.get("/branding.png", include_in_schema=False)
+def branding_image() -> FileResponse:
+    """Branding icon for external developer-portal registration (Garmin, etc.)."""
+    return FileResponse(BRANDING_IMAGE, media_type="image/png")
 
 
 @router.get("/privacy", response_class=HTMLResponse)
