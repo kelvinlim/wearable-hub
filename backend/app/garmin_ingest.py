@@ -17,6 +17,11 @@ Garmin shapes (Health API summary endpoints; prior art garminrec/db_code2.py:475
     and intraday HR via `timeOffsetHeartRateSamples` ({seconds-from-start: bpm}).
   - `sleeps`: deep/light/rem/awake DurationInSeconds (+ durationInSeconds total).
   - `hrv` / `hrvSummary`: lastNightAvg (ms).
+  - `stress` / `stressDetails`: avg/max + per-band durations from timeOffsetStressLevelValues.
+  - `pulseox` / `pulseOx`: avg SpO2 % from timeOffsetSpo2Values (-> spo2_avg).
+  - `respiration`: avg/min/max breaths/min from timeOffsetEpochToBreaths.
+  - `bodyComps`: weight/BMI/body fat/water/muscle/bone.
+  - `userMetrics`: VO2max + fitness age.
   - `epochs` and the rest: landed raw (no daily mapping in v1).
 """
 
@@ -76,12 +81,16 @@ def _local_date(item: dict) -> date | None:
             return date.fromisoformat(cal)
         except ValueError:
             pass
+    # Most summaries carry startTime*; body composition carries measurementTime* instead.
     start = item.get("startTimeInSeconds")
+    off = item.get("startTimeOffsetInSeconds")
+    if start is None:
+        start = item.get("measurementTimeInSeconds")
+        off = item.get("measurementTimeOffsetInSeconds")
     if start is None:
         return None
-    off = item.get("startTimeOffsetInSeconds") or 0
     try:
-        return datetime.fromtimestamp(int(start) + int(off), tz=timezone.utc).date()
+        return datetime.fromtimestamp(int(start) + int(off or 0), tz=timezone.utc).date()
     except (TypeError, ValueError, OSError):
         return None
 
@@ -151,6 +160,26 @@ def _num(v):
     return v
 
 
+def _summarize_offsets(values) -> dict | None:
+    """Avg/min/max/count over a Garmin `timeOffset*` -> value map.
+
+    These maps key seconds-from-start to a reading (stress level, SpO2 %, breaths/min). Garmin
+    uses negative sentinels (-1 = unable to measure, -2 = insufficient data); drop them and any
+    non-numeric value. Returns None if nothing usable remains.
+    """
+    if not isinstance(values, dict):
+        return None
+    nums = [n for n in (_num(v) for v in values.values()) if n is not None and n >= 0]
+    if not nums:
+        return None
+    return {
+        "avg": round(sum(nums) / len(nums), 1),
+        "min": min(nums),
+        "max": max(nums),
+        "count": len(nums),
+    }
+
+
 # --- per-datatype appliers ------------------------------------------------------
 
 def _apply_dailies(db: Session, account: ProviderAccount, d: date, item: dict) -> None:
@@ -213,6 +242,76 @@ def _apply_hrv(db: Session, account: ProviderAccount, d: date, item: dict) -> No
     row.pulled_at = datetime.utcnow()
 
 
+def _apply_stress(db: Session, account: ProviderAccount, d: date, item: dict) -> None:
+    """Stress Details push -> metrics["stress"]. Headline avg/max prefer Garmin's own fields,
+    else are computed from `timeOffsetStressLevelValues`."""
+    row = _get_or_create_daily(db, account, d)
+    summary = _summarize_offsets(item.get("timeOffsetStressLevelValues"))
+    avg = _num(item.get("averageStressLevel"))
+    if avg is None or avg < 0:
+        avg = summary["avg"] if summary else None
+    mx = _num(item.get("maxStressLevel"))
+    if mx is None or mx < 0:
+        mx = summary["max"] if summary else None
+    _merge_metrics(row, "stress", {
+        "avg": avg,
+        "max": mx,
+        "duration_seconds": _num(item.get("stressDurationInSeconds")),
+        "rest_seconds": _num(item.get("restStressDurationInSeconds")),
+        "low_seconds": _num(item.get("lowStressDurationInSeconds")),
+        "medium_seconds": _num(item.get("mediumStressDurationInSeconds")),
+        "high_seconds": _num(item.get("highStressDurationInSeconds")),
+        "raw": item,
+    })
+    row.pulled_at = datetime.utcnow()
+
+
+def _apply_pulseox(db: Session, account: ProviderAccount, d: date, item: dict) -> None:
+    """Pulse Ox push -> spo2_avg column (typed) + metrics["spo2"] detail."""
+    row = _get_or_create_daily(db, account, d)
+    summary = _summarize_offsets(item.get("timeOffsetSpo2Values"))
+    if summary:
+        row.spo2_avg = float(summary["avg"])
+    _merge_metrics(row, "spo2", {**(summary or {}), "on_demand": item.get("onDemand"), "raw": item})
+    row.pulled_at = datetime.utcnow()
+
+
+def _apply_respiration(db: Session, account: ProviderAccount, d: date, item: dict) -> None:
+    """All-day respiration push -> metrics["respiration"] (avg/min/max breaths per minute)."""
+    row = _get_or_create_daily(db, account, d)
+    summary = _summarize_offsets(item.get("timeOffsetEpochToBreaths"))
+    _merge_metrics(row, "respiration", {**(summary or {}), "raw": item})
+    row.pulled_at = datetime.utcnow()
+
+
+def _apply_body_comp(db: Session, account: ProviderAccount, d: date, item: dict) -> None:
+    """Body Composition push -> metrics["body_composition"]. Weight normalized grams -> kg."""
+    row = _get_or_create_daily(db, account, d)
+    weight_g = _num(item.get("weightInGrams"))
+    _merge_metrics(row, "body_composition", {
+        "weight_kg": round(weight_g / 1000, 2) if weight_g is not None else None,
+        "bmi": _num(item.get("bodyMassIndex")),
+        "body_fat_percent": _num(item.get("bodyFatInPercent")),
+        "body_water_percent": _num(item.get("bodyWaterInPercent")),
+        "muscle_mass_g": _num(item.get("muscleMassInGrams")),
+        "bone_mass_g": _num(item.get("boneMassInGrams")),
+        "raw": item,
+    })
+    row.pulled_at = datetime.utcnow()
+
+
+def _apply_user_metrics(db: Session, account: ProviderAccount, d: date, item: dict) -> None:
+    """User Metrics push -> metrics["user_metrics"] (VO2max, fitness age)."""
+    row = _get_or_create_daily(db, account, d)
+    _merge_metrics(row, "user_metrics", {
+        "vo2_max": _num(item.get("vo2Max")),
+        "vo2_max_cycling": _num(item.get("vo2MaxCycling")),
+        "fitness_age": _num(item.get("fitnessAge")),
+        "raw": item,
+    })
+    row.pulled_at = datetime.utcnow()
+
+
 def _store_intraday_hr(db: Session, account: ProviderAccount, d: date, item: dict) -> None:
     """Write Garmin intraday HR (dailies.timeOffsetHeartRateSamples) as N-min average buckets.
 
@@ -265,13 +364,22 @@ def _count_points(db: Session, account_id: int, d: date) -> int:
     )
 
 
-# Garmin datatype (body key / URL path) -> applier. HRV is `hrv` in the prior art; newer docs use
-# `hrvSummary`, so accept both.
+# Garmin datatype (body key / URL path) -> applier. The body's top-level key wins; the URL slug is
+# only a fallback hint, so register every plausible spelling. HRV is `hrv` in the prior art; newer
+# docs use `hrvSummary`. Stress pushes under `stressDetails`; Pulse Ox casing varies (`pulseox` /
+# `pulseOx`).
 _APPLIERS = {
     "dailies": _apply_dailies,
     "sleeps": _apply_sleep,
     "hrv": _apply_hrv,
     "hrvSummary": _apply_hrv,
+    "stress": _apply_stress,
+    "stressDetails": _apply_stress,
+    "pulseox": _apply_pulseox,
+    "pulseOx": _apply_pulseox,
+    "respiration": _apply_respiration,
+    "bodyComps": _apply_body_comp,
+    "userMetrics": _apply_user_metrics,
 }
 
 
