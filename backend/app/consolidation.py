@@ -29,10 +29,10 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.crypto import decrypt, encrypt
+from app.dailywrite import upsert_daily as _upsert_daily
 from app.db import SessionLocal
 from app.models import (
     ConsolidationState,
-    DailyHealth,
     HealthDataPoint,
     PairedDevice,
     ProviderAccount,
@@ -954,34 +954,6 @@ def consolidate_day(db: Session, account: ProviderAccount, d: date) -> Consolida
     state.status, state.detail, state.completed_at = "done", None, datetime.utcnow()
     db.commit()
     return state
-
-
-def _upsert_daily(db, account, d, typed, metrics, point_count, tz_off) -> None:
-    row = db.scalar(
-        select(DailyHealth).where(
-            DailyHealth.provider_account_id == account.id,
-            DailyHealth.local_date == d,
-        )
-    )
-    if row is None:
-        row = DailyHealth(provider_account_id=account.id, local_date=d)
-        db.add(row)
-    row.subject_id = account.subject_id
-    row.tz_offset_seconds = tz_off
-    row.steps = typed.get("steps")
-    row.distance_m = typed.get("distance_m")
-    row.calories = typed.get("calories")
-    row.floors = typed.get("floors")
-    row.sleep_minutes = typed.get("sleep_minutes")
-    row.hr_avg = typed.get("hr_avg")
-    row.resting_hr = typed.get("resting_hr")
-    row.hrv_ms = typed.get("hrv_ms")
-    row.spo2_avg = typed.get("spo2_avg")
-    row.azm_total = typed.get("azm_total")
-    row.mvpa_minutes = typed.get("mvpa_minutes")
-    row.metrics = metrics
-    row.point_count = point_count
-    row.pulled_at = datetime.utcnow()
 
 
 def mark_dirty(db: Session, account_id: int, dates) -> int:

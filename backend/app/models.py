@@ -93,7 +93,10 @@ class Subject(Base):
     # study's own subject identifier (shown as "Study ID" in the console).
     subject_label: Mapped[str | None] = mapped_column(String(255))
     participant_id: Mapped[str | None] = mapped_column(String(255))
-    entry_code: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    # Legacy: the entry code is now per-device (on `provider_accounts`, see ProviderAccount.entry_code).
+    # Kept nullable for historical rows (migration 0014 copies each code onto a provider_account);
+    # no longer written for new subjects.
+    entry_code: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
     status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
     # Optional inclusive data-collection window (subject-local days). When set, pulls are
     # clamped to it across every trigger (real-time webhook, nightly safety-net, on-demand).
@@ -109,9 +112,14 @@ class Subject(Base):
 
 
 class ProviderAccount(Base):
-    """One row per subject+provider. Holds OAuth state and encrypted tokens.
+    """One row per subject+provider — a *device registration*. Holds the per-device enrollment
+    `entry_code`, OAuth state, and encrypted tokens. A subject may have several (e.g. Fitbit + Garmin).
 
-    `state` keys the OAuth callback lookup (persisted here, NOT in process globals).
+    `state` keys the OAuth callback lookup (persisted here, NOT in process globals). For Garmin
+    (OAuth1a) the transient fields are repurposed: `state` holds the request token, `code_verifier`
+    the request-token secret, `access_token` the user access token (UAT), and `refresh_token` the
+    Garmin token secret (needed to sign API calls). `token_expires_at` stays null (Garmin tokens
+    don't expire).
     """
 
     __tablename__ = "provider_accounts"
@@ -119,10 +127,12 @@ class ProviderAccount(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     subject_id: Mapped[int] = mapped_column(ForeignKey("subjects.id"), nullable=False)
     provider: Mapped[str] = mapped_column(String(32), nullable=False)  # 'fitbit_gh' | 'garmin'
+    # Per-device enrollment code the subject enters at /enroll; identifies (subject, provider).
+    entry_code: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
 
     # OAuth flow state
     state: Mapped[str | None] = mapped_column(String(255), index=True)
-    code_verifier: Mapped[str | None] = mapped_column(String(255))  # PKCE
+    code_verifier: Mapped[str | None] = mapped_column(String(255))  # PKCE (Garmin: request secret)
 
     # Tokens (Fernet ciphertext for access/refresh)
     access_token: Mapped[str | None] = mapped_column(Text)

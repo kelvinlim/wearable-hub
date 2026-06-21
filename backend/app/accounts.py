@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.crypto import decrypt
 from app.models import ProviderAccount, Subject
-from app.providers import fitbit_gh
+from app.providers import fitbit_gh, garmin
 
 log = logging.getLogger(__name__)
 
@@ -34,26 +34,31 @@ def mark_revoked(db: Session, acct: ProviderAccount, *, subject_status: str = "r
 
 
 def revoke_account(db: Session, acct: ProviderAccount) -> bool:
-    """Revoke the account's grant at Google (best-effort), then mark it revoked locally.
+    """Revoke the account's grant at the provider (best-effort), then mark it revoked locally.
 
-    Returns True if a token was actually sent to Google's revoke endpoint. Revocation at Google
-    is idempotent; if it can't be reached we still mark the account revoked locally and log.
-    Caller commits.
+    Dispatches by provider: Google (`fitbit_gh.revoke`) vs Garmin (`garmin.deregister`). Returns
+    True if a revoke/deregister call was actually sent. Provider revocation is idempotent; if it
+    can't be reached we still mark the account revoked locally and log. Caller commits.
     """
-    token = None
-    if acct.refresh_token:
-        token = decrypt(acct.refresh_token)
-    elif acct.access_token:
-        token = decrypt(acct.access_token)
-
     token_sent = False
-    if token:
-        try:
-            fitbit_gh.revoke(token)
-            token_sent = True
-        except Exception:  # noqa: BLE001 — never let a Google hiccup block the local revoke
-            log.exception(
-                "Google revoke failed for provider_account %s; marking revoked locally", acct.id
-            )
+    try:
+        if acct.provider == garmin.NAME:
+            # Garmin OAuth1a needs both the UAT (access_token) and the token secret (refresh_token).
+            if acct.access_token and acct.refresh_token:
+                garmin.deregister(decrypt(acct.access_token), decrypt(acct.refresh_token))
+                token_sent = True
+        else:
+            token = None
+            if acct.refresh_token:
+                token = decrypt(acct.refresh_token)
+            elif acct.access_token:
+                token = decrypt(acct.access_token)
+            if token:
+                fitbit_gh.revoke(token)
+                token_sent = True
+    except Exception:  # noqa: BLE001 — never let a provider hiccup block the local revoke
+        log.exception(
+            "Provider revoke failed for provider_account %s; marking revoked locally", acct.id
+        )
     mark_revoked(db, acct)
     return token_sent

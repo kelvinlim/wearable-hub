@@ -13,6 +13,8 @@ After=wearable-network.service
 [Container]
 ContainerName=wearable-backend
 Image=localhost/wearable-backend:latest
+# Loads all settings incl. Garmin OAuth1a (GARMIN_CONSUMER_KEY/SECRET, GARMIN_OAUTH_REDIRECT_URI).
+# Host nginx must also proxy /webhooks/garmin/* here (like /enroll and /webhooks/google-health).
 EnvironmentFile=/home/kolim/Projects/wearable-hub/.env
 PublishPort=8010:8000
 # Service-account key for Tier-1 subscriber registration (mount the host dir read-only).

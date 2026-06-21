@@ -5,6 +5,18 @@ export const cn = (...a) => twMerge(clsx(a));
 
 export const today = () => new Date().toISOString().slice(0, 10);
 
+// Providers a subject can register (one device each). Shared by the console views + exports.
+export const PROVIDER_LABEL = { fitbit_gh: "Fitbit", garmin: "Garmin" };
+export const ALL_PROVIDERS = ["fitbit_gh", "garmin"];
+export const providerLabel = (p) => PROVIDER_LABEL[p] || p || "";
+
+// The entry code of a subject's registration for a given provider (for study exports).
+export function codeFor(subjectPayload, provider) {
+  const regs = (subjectPayload.subject && subjectPayload.subject.registrations) || [];
+  const r = regs.find((x) => x.provider === provider);
+  return r ? r.entry_code : "";
+}
+
 export function fmtNum(v) {
   if (v == null) return null;
   return typeof v === "number" ? Math.round(v * 10) / 10 : v;
@@ -56,7 +68,7 @@ function csvRow(vals) {
 }
 
 const DAILY_COLS = [
-  "date", "tz_offset_seconds", "steps", "distance_m", "calories", "floors", "sleep_minutes",
+  "date", "provider", "tz_offset_seconds", "steps", "distance_m", "calories", "floors", "sleep_minutes",
   "hr_avg", "resting_hr", "hrv_ms", "spo2_avg",
   "azm_total", "azm_cardio", "azm_peak", "azm_fat_burn",
   "mvpa_minutes", "active_light_min", "active_moderate_min", "active_vigorous_min",
@@ -69,7 +81,7 @@ function dailyVals(d) {
   const azm = (d.metrics && d.metrics.active_zone_minutes) || {};
   const am = (d.metrics && d.metrics.active_minutes) || {};
   return [
-    d.date, d.tz_offset_seconds, d.steps, d.distance_m, d.calories, d.floors, d.sleep_minutes,
+    d.date, providerLabel(d.provider), d.tz_offset_seconds, d.steps, d.distance_m, d.calories, d.floors, d.sleep_minutes,
     d.hr_avg, d.resting_hr, d.hrv_ms, d.spo2_avg,
     d.azm_total, azm.cardio, azm.peak, azm.fat_burn,
     d.mvpa_minutes, am.light, am.moderate, am.vigorous,
@@ -84,30 +96,30 @@ export function dailyCsv(data) {
 }
 
 export function pointsCsv(data) {
-  const rows = [csvRow(["date", "datatype", "start_time", "end_time", "value", "tz_offset_seconds"])];
+  const rows = [csvRow(["date", "provider", "datatype", "start_time", "end_time", "value", "tz_offset_seconds"])];
   for (const d of data.days)
     for (const p of d.points || [])
-      rows.push(csvRow([d.date, p.datatype, p.start_time, p.end_time, p.value, p.tz_offset_seconds]));
+      rows.push(csvRow([d.date, providerLabel(d.provider ?? p.provider), p.datatype, p.start_time, p.end_time, p.value, p.tz_offset_seconds]));
   return rows.join("\n");
 }
 
 export function studyDailyCsv(data) {
-  const rows = [csvRow(["subject_label", "entry_code", ...DAILY_COLS])];
+  const rows = [csvRow(["subject_label", "participant_id", "entry_code", ...DAILY_COLS])];
   for (const s of data.subjects || [])
     for (const d of s.days)
-      rows.push(csvRow([s.subject.subject_label, s.subject.entry_code, ...dailyVals(d)]));
+      rows.push(csvRow([s.subject.subject_label, s.subject.participant_id, codeFor(s, d.provider), ...dailyVals(d)]));
   return rows.join("\n");
 }
 
 export function studyPointsCsv(data) {
   const rows = [
-    csvRow(["subject_label", "entry_code", "date", "datatype", "start_time", "end_time", "value", "tz_offset_seconds"]),
+    csvRow(["subject_label", "participant_id", "entry_code", "date", "provider", "datatype", "start_time", "end_time", "value", "tz_offset_seconds"]),
   ];
   for (const s of data.subjects || [])
     for (const d of s.days)
       for (const p of d.points || [])
         rows.push(
-          csvRow([s.subject.subject_label, s.subject.entry_code, d.date, p.datatype, p.start_time, p.end_time, p.value, p.tz_offset_seconds])
+          csvRow([s.subject.subject_label, s.subject.participant_id, codeFor(s, d.provider), d.date, providerLabel(d.provider), p.datatype, p.start_time, p.end_time, p.value, p.tz_offset_seconds])
         );
   return rows.join("\n");
 }

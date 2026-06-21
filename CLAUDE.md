@@ -109,10 +109,33 @@ researcher auth/RBAC foundation. Built and verified against the live API:
   /admin/subjects/{id}`).
 
 **Runtime:** `backend` (host :8010), `scheduler`, `frontend` (host :8020). DB is an external
-MariaDB at `cnc3.med.umn.edu`. Public via the lnpitask.umn.edu host nginx: `…/enroll`
-(subjects), `…/webhooks/google-health` (Google callbacks), and `…/wearable/` (console, prefix
-stripped to :8020). See [CHANGELOG.md](CHANGELOG.md) for the feature log + verified API
-findings. Remaining: Garmin provider; production Restricted-scope review.
+MariaDB at `cnc3.med.umn.edu`. Public via the lnpitask.umn.edu host nginx. **Live Google routes
+stay at root** (`…/enroll` subjects, `…/webhooks/google-health` callbacks) because the verified
+Cloud Console redirect URI + registered subscriber point there. **New/Garmin routes are namespaced
+under `…/wearable/`** to avoid root collisions: `…/wearable/enroll`, `…/wearable/enroll/callback`,
+`…/wearable/webhooks/garmin/{datatype}` — host nginx strips `/wearable` straight to the backend
+(more-specific than the `…/wearable/` console block → :8020). `PUBLIC_PATH_PREFIX=/wearable` makes
+the enroll page emit prefixed links (privacy stays at root as a Google-verification asset). See
+[deploy/nginx/wearable-hub.conf](deploy/nginx/wearable-hub.conf). See [CHANGELOG.md](CHANGELOG.md)
+for the feature log + verified API
+findings. Remaining: live Garmin verification once portal webhooks are registered; production
+Restricted-scope review.
+
+- **Garmin provider (push model).** Second provider via OAuth 1.0a (`app/providers/garmin.py`,
+  `requests-oauthlib`) — **no refresh tokens, no subscription API**. Garmin **pushes the values**,
+  so there's no pull/consolidation: `app/garmin_ingest.py` lands each push raw in `health_data`,
+  resolves the account by Garmin `userId` (stored in `provider_user_id`), and **merges** the mapped
+  metrics into `daily_health`/`health_data_points` per-datatype + idempotently (re-pushes
+  self-heal). Intraday HR comes from `dailies.timeOffsetHeartRateSamples` (not `epochs`). Webhook
+  `POST /webhooks/garmin/{datatype}` (always 200; `deregistrations` → revoke). Shared daily/point
+  writers live in `app/dailywrite.py`.
+- **Per-device enrollment.** `entry_code` lives on `provider_accounts` (one per device), not
+  `subjects` — a subject can register both Fitbit and Garmin. Staff create registrations
+  (`POST /admin/subjects/{id}/registrations`); `/enroll` looks up the code → provider → OAuth, and
+  one `/enroll/callback` dispatches Google (`code`+`state`) vs Garmin (`oauth_token`+`oauth_verifier`).
+  Migration `0014` moved existing codes onto each subject's fitbit account. For Garmin the
+  repurposed columns: `state`=request token, `code_verifier`=request secret, `access_token`=UAT,
+  `refresh_token`=token secret, `provider_user_id`=`userId`.
 
 **Prod on lnpitask runs under Podman Quadlets**, not compose. Sources are checked in at
 [deploy/quadlet/](deploy/quadlet/) and installed to `/etc/containers/systemd/`

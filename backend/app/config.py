@@ -10,8 +10,14 @@ class Settings(BaseSettings):
 
     # --- App ---
     app_name: str = "Wearable Hub"
-    app_version: str = "0.2.0"  # keep in sync with backend/pyproject.toml + frontend/package.json
+    app_version: str = "0.3.0"  # keep in sync with backend/pyproject.toml + frontend/package.json
     environment: str = "dev"  # dev | prod
+
+    # Public URL path prefix the app is served under on the host (e.g. "/wearable" on lnpitask,
+    # where everything lives under https://host/wearable/ to avoid colliding with other apps).
+    # Used only for building subject-facing enroll links/redirects so they stay inside the prefix;
+    # the backend routes themselves are unprefixed (host nginx strips it). "" = served at root.
+    public_path_prefix: str = ""
 
     # --- Database ---
     # External MariaDB; override per environment via .env.
@@ -35,6 +41,20 @@ class Settings(BaseSettings):
     gh_subscription_data_types: str = ""
     # AUTOMATIC = Google auto-creates per-user subscriptions on consent; MANUAL = we create them.
     gh_subscription_create_policy: str = "AUTOMATIC"
+
+    # --- Garmin Health API (OAuth 1.0a; second provider) ---
+    # Consumer key/secret from the Garmin Developer portal. OAuth1a tokens don't expire and
+    # there's no subscription API — Garmin pushes data to the per-datatype webhook endpoints.
+    garmin_consumer_key: str = ""
+    garmin_consumer_secret: str = ""
+    # Subject OAuth callback (must match the redirect registered in the Garmin portal).
+    garmin_oauth_redirect_uri: str = "https://lnpitask.umn.edu/enroll/callback"
+    # Base URLs (confirm against current Garmin docs before live test).
+    garmin_request_token_url: str = "https://connectapi.garmin.com/oauth-service/oauth/request_token"
+    garmin_authorize_url: str = "https://connect.garmin.com/oauthConfirm"
+    garmin_access_token_url: str = "https://connectapi.garmin.com/oauth-service/oauth/access_token"
+    # Garmin Health (wellness) REST base — used for the user-id lookup and deregistration.
+    garmin_api_base: str = "https://apis.garmin.com/wellness-api/rest"
 
     # --- Researcher auth (Google login + RBAC) ---
     # Reuses GOOGLE_CLIENT_ID/SECRET. The researcher login callback (add this exact URI to the

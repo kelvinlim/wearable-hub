@@ -39,6 +39,8 @@ class SubjectCreate(BaseModel):
     participant_id: str | None = None
     collection_start: date | None = None
     collection_end: date | None = None
+    # Optional: also create the subject's first device registration (generates its entry code).
+    provider: str | None = None  # 'fitbit_gh' | 'garmin'
 
 
 class SubjectUpdate(BaseModel):
@@ -58,25 +60,51 @@ class SubjectOut(BaseModel):
     study_id: int
     subject_label: str | None
     participant_id: str | None = None
-    entry_code: str
     status: str
     collection_start: date | None = None
     collection_end: date | None = None
     created_at: datetime | None
 
 
-class SubjectStatusOut(SubjectOut):
-    """Subject plus registration status + a compact health/freshness summary for the list view."""
+class RegistrationCreate(BaseModel):
+    provider: str  # 'fitbit_gh' | 'garmin'
 
+
+class RegistrationOut(BaseModel):
+    """One device registration (provider_account) with its per-device health/freshness summary."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    provider: str
+    entry_code: str | None = None
     registered: bool = False
-    # Lowest battery across the subject's paired devices (the most concerning one).
+    # Per-device battery + data freshness (computed for the list/detail views).
     battery_level: int | None = None
     battery_status: str | None = None  # High | Medium | Low | Empty
     battery_low: bool = False
-    # Data freshness/completeness.
+    last_data_date: date | None = None
+    days_with_data_7: int = 0
+    data_stale: bool = False
+
+
+class SubjectStatusOut(SubjectOut):
+    """Subject plus its device registrations and a cross-device health/freshness summary.
+
+    The flat fields are the *most concerning* values across the subject's devices (so the table's
+    battery / staleness columns still work); `registrations` carries the per-device detail + codes.
+    """
+
+    registered: bool = False  # any device linked
+    registrations: list[RegistrationOut] = []
+    # Lowest battery across all the subject's paired devices (the most concerning one).
+    battery_level: int | None = None
+    battery_status: str | None = None  # High | Medium | Low | Empty
+    battery_low: bool = False
+    # Data freshness/completeness (best across devices).
     last_data_date: date | None = None
     days_with_data_7: int = 0  # days with consolidated data in the last 7 (0–7)
-    data_stale: bool = False  # linked + in-window but no data in the last 2 days
+    data_stale: bool = False  # any linked device in-window but no data in the last 2 days
 
 
 # --- Admin: researchers (users) + study membership ------------------------------
