@@ -22,6 +22,9 @@ router = APIRouter(tags=["public"])
 # our verified domain. Baked into the backend image via `COPY . .`.
 BRANDING_IMAGE = Path(__file__).resolve().parent.parent / "assets" / "branding.png"
 BRANDING_IMAGE_JPG = Path(__file__).resolve().parent.parent / "assets" / "branding.jpg"
+# Extension-less icon, byte-identical to the proven /garminrec/icon (which Garmin's
+# branding validator accepts). The .png/.jpg URLs are rejected; this one mirrors what works.
+BRANDING_ICON = Path(__file__).resolve().parent.parent / "assets" / "icon.png"
 
 # Bump when the policy text changes (Google expects a dated, versioned policy).
 PRIVACY_LAST_UPDATED = "June 18, 2026"
@@ -74,6 +77,12 @@ def branding_image() -> FileResponse:
 def branding_image_jpg() -> FileResponse:
     """JPEG variant — Garmin's branding-image validator rejects the PNG."""
     return FileResponse(BRANDING_IMAGE_JPG, media_type="image/jpeg")
+
+
+@router.get("/icon", include_in_schema=False)
+def branding_icon() -> FileResponse:
+    """Extension-less branding icon mirroring the proven /garminrec/icon route."""
+    return FileResponse(BRANDING_ICON, media_type="image/png")
 
 
 @router.get("/privacy", response_class=HTMLResponse)
