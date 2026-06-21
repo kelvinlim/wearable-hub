@@ -25,7 +25,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import consolidation
+from app import consolidation, garmin_ingest
 from app.accounts import mark_revoked
 from app.config import get_settings
 from app.db import get_db
@@ -216,3 +216,47 @@ async def google_health(
         db.rollback()
 
     return Response(status_code=200)
+
+
+@router.post("/garmin/{datatype}")
+async def garmin_push(datatype: str, request: Request, db: Session = Depends(get_db)) -> Response:
+    """Receive a Garmin push for one summary type. Always 200 (even on error) so Garmin keeps
+    the subscription alive.
+
+    Garmin POSTs the actual values, so there's no pull step: we land + aggregate inline (local
+    compute only, no outbound calls). A `deregistrations` push marks the account unregistered.
+    Garmin pushes aren't secret-authenticated (the registered URL is the trust boundary), so no
+    auth gate here — unlike the Google handler.
+    """
+    raw = await request.body()
+    try:
+        body = json.loads(raw) if raw else {}
+    except ValueError:
+        body = {"_unparsed": raw.decode("utf-8", "replace")}
+
+    try:
+        if datatype == "deregistrations" or (isinstance(body, dict) and "deregistrations" in body):
+            _garmin_deregister(db, body)
+            return Response(status_code=200)
+        garmin_ingest.ingest_push(db, datatype, body)
+    except Exception:  # noqa: BLE001 — never let an error reach Garmin
+        log.exception("Error processing Garmin %s push; returning 200 regardless", datatype)
+        db.rollback()
+
+    return Response(status_code=200)
+
+
+def _garmin_deregister(db: Session, body: dict) -> None:
+    """Mark each deregistered Garmin account unregistered (resolve by userId). Best-effort."""
+    items = body.get("deregistrations") if isinstance(body, dict) else None
+    if not isinstance(items, list):
+        return
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        # Land the raw event, then flip the account.
+        db.add(HealthData(provider="garmin", datatype="deregistrations", payload=item))
+        acct = garmin_ingest.resolve_account(db, item)
+        if acct:
+            mark_revoked(db, acct)
+    db.commit()

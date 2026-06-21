@@ -4,6 +4,34 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
+## [0.3.0] — 2026-06-21
+
+### Added
+
+- **Garmin provider (OAuth 1.0a + push webhooks).** The second provider, alongside
+  Fitbit-via-Google-Health. Garmin differs fundamentally: OAuth **1.0a** (3-legged, HMAC-signed,
+  **no refresh tokens**, tokens don't expire), and **push webhooks that carry the actual values**
+  (so there's **no pull/consolidation** step and **no subscription API**). New
+  `app/providers/garmin.py` (request-token → authorize → access-token via `requests-oauthlib`;
+  `fetch_user_id` resolves the Garmin `userId` identity key at callback; `deregister` for
+  revocation). New `app/garmin_ingest.py` lands each push raw in `health_data`, resolves the
+  account by `userId`, and **merges** the mapped metrics into `daily_health` /
+  `health_data_points` per-datatype and idempotently (`dailies` → steps/distance/calories/floors/
+  HR + intraday HR from `timeOffsetHeartRateSamples`; `sleeps` → sleep + stages; `hrv` → hrv_ms;
+  everything else landed raw). New parameterized webhook `POST /webhooks/garmin/{datatype}`
+  (always 200; `deregistrations` → `mark_revoked`). Shared `daily_health`/`points` write helpers
+  factored into `app/dailywrite.py` so the Google and Garmin paths write identically.
+- **Per-device enrollment (entry code moved to the registration).** A subject can now register
+  **both** a Fitbit and a Garmin device; the unique `entry_code` moved from `subjects` onto
+  `provider_accounts` (one per device), created by staff up front. Migration `0014` back-fills
+  every existing `subjects.entry_code` onto that subject's `fitbit_gh` account (production-safe;
+  no code lost) and relaxes `subjects.entry_code` to nullable. New
+  `POST/DELETE /admin/subjects/{id}/registrations`; `/enroll` looks up the code, customizes the
+  message, and launches that provider's OAuth (one `/enroll/callback` dispatches Google vs Garmin
+  by the params present). The console shows **one subject row with a device chip per registration**
+  (provider + entry code + linked/stale), an "Add device" control, and a provider-tagged daily
+  view / export.
+
 ## [0.2.0] — 2026-06-18
 
 ### Added

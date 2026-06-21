@@ -4,7 +4,7 @@ import { api } from "../api";
 import { Card, Button, Badge, Select, Th, Td, Empty, SectionTitle } from "../ui";
 import {
   cn, today, fmtNum, localTime, download, dailyCsv, pointsCsv,
-  STAGE_ORDER, stageMinutes,
+  STAGE_ORDER, stageMinutes, providerLabel,
 } from "../lib";
 
 export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
@@ -51,20 +51,39 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
   const doExport = () =>
     guard(async () => {
       const data = await api.exportSubject(subject.id, exFrom || undefined, exTo || undefined);
-      const base = `${(subject.subject_label || "subject").replace(/\s+/g, "_")}-${subject.entry_code}`;
+      const who = subject.participant_id || subject.subject_label || `subject-${subject.id}`;
+      const base = `${String(who).replace(/\s+/g, "_")}`;
       if (exFmt === "json") download(`${base}.json`, "application/json", JSON.stringify(data, null, 2));
       else if (exFmt === "csv-daily") download(`${base}-daily.csv`, "text/csv", dailyCsv(data));
       else download(`${base}-points.csv`, "text/csv", pointsCsv(data));
     });
 
-  const HEAD = ["Date", "Steps", "Dist (m)", "Cal", "Floors", "Sleep", "HR avg", "Rest HR", "HRV", "SpO₂", "AZM", "MVPA", "Pts"];
+  const multiDevice = new Set(daily.map((d) => d.provider).filter(Boolean)).size > 1;
+  const HEAD = ["Date", ...(multiDevice ? ["Device"] : []), "Steps", "Dist (m)", "Cal", "Floors", "Sleep", "HR avg", "Rest HR", "HRV", "SpO₂", "AZM", "MVPA", "Pts"];
 
   return (
     <Card className="overflow-hidden">
       <div className="flex flex-wrap items-center gap-3 border-b border-gray-100 p-4 dark:border-neutral-800">
         <SectionTitle>{subject.participant_id || subject.subject_label || "Subject"}</SectionTitle>
-        <code className="rounded bg-gray-100 px-1.5 py-0.5 text-xs dark:bg-neutral-800">{subject.entry_code}</code>
-        {subject.registered ? <Badge tone="green">linked</Badge> : <Badge>not linked</Badge>}
+        {(subject.registrations || []).map((r) => (
+          <Badge key={r.id} tone={r.registered ? "green" : "gray"} className="gap-1">
+            <span className="font-semibold">{providerLabel(r.provider)}</span>
+            <code className="rounded bg-black/5 px-1 text-[11px] dark:bg-white/10">{r.entry_code}</code>
+            {r.registered ? "✓ linked" : "not linked"}
+            {r.registered && canAdmin && (
+              <button
+                title={`Revoke ${providerLabel(r.provider)} authorization`}
+                onClick={() => {
+                  if (!confirm(`Revoke this subject's ${providerLabel(r.provider)} authorization?`)) return;
+                  guard(async () => { await api.revoke(subject.id, r.provider); onChanged(); });
+                }}
+                className="ml-0.5 inline-flex text-red-600 hover:text-red-700"
+              >
+                <Ban className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </Badge>
+        ))}
         {(subject.collection_start || subject.collection_end) && (
           <Badge tone="gold">
             collect {subject.collection_start || "…"} → {subject.collection_end || "…"}
@@ -108,12 +127,7 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
               {busy ? "Pulling…" : "Pull + consolidate"}
             </Button>
             <span className="text-xs text-gray-400">(both required)</span>
-            <Button
-              variant="danger"
-              onClick={() => { if (confirm("Revoke this subject's wearable authorization?")) guard(async () => { await api.revoke(subject.id); onChanged(); }); }}
-            >
-              <Ban className="h-4 w-4" /> Revoke
-            </Button>
+            <span className="text-xs text-gray-400">· revoke a device from its chip above</span>
           </div>
         )}
       </div>
@@ -138,6 +152,7 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
                     </span>
                     {d.date}
                   </Td>
+                  {multiDevice && <Td className="text-xs text-gray-500">{providerLabel(d.provider)}</Td>}
                   <Td>{cell(d.steps)}</Td>
                   <Td>{cell(d.distance_m)}</Td>
                   <Td>{cell(d.calories)}</Td>

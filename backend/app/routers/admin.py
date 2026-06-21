@@ -31,10 +31,12 @@ from app.models import (
     Subscription,
     User,
 )
-from app.providers import fitbit_gh
+from app.providers import fitbit_gh, garmin
 from app.schemas import (
     MemberCreate,
     MemberOut,
+    RegistrationCreate,
+    RegistrationOut,
     StudyCreate,
     StudyOut,
     StudyUpdate,
@@ -60,14 +62,38 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 _CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 _CODE_LEN = 6
 
+# Known providers (a device registration's provider must be one of these).
+_PROVIDERS = frozenset({fitbit_gh.NAME, garmin.NAME})
+
 
 def _generate_entry_code(db: Session) -> str:
-    """Generate a unique entry code. Retries on the (rare) collision."""
+    """Generate a unique per-device entry code. Retries on the (rare) collision."""
     for _ in range(10):
         code = "".join(secrets.choice(_CODE_ALPHABET) for _ in range(_CODE_LEN))
-        if db.scalar(select(Subject).where(Subject.entry_code == code)) is None:
+        if db.scalar(select(ProviderAccount).where(ProviderAccount.entry_code == code)) is None:
             return code
     raise HTTPException(status_code=500, detail="Could not allocate a unique entry code")
+
+
+def _create_registration(db: Session, subject_id: int, provider: str) -> ProviderAccount:
+    """Create a device registration (provider_account) with a fresh entry code. Refuses dups."""
+    if provider not in _PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {provider}")
+    existing = db.scalar(
+        select(ProviderAccount).where(
+            ProviderAccount.subject_id == subject_id,
+            ProviderAccount.provider == provider,
+        )
+    )
+    if existing is not None:
+        raise HTTPException(
+            status_code=409, detail=f"Subject already has a {provider} registration"
+        )
+    acct = ProviderAccount(
+        subject_id=subject_id, provider=provider, entry_code=_generate_entry_code(db)
+    )
+    db.add(acct)
+    return acct
 
 
 @router.post("/studies", response_model=StudyOut, status_code=201)
@@ -132,16 +158,21 @@ def create_subject(
     assert_study_admin(db, user, study_id)
     if payload.collection_end and payload.collection_start and payload.collection_end < payload.collection_start:
         raise HTTPException(status_code=400, detail="collection_end must be >= collection_start")
+    if payload.provider is not None and payload.provider not in _PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {payload.provider}")
     subject = Subject(
         study_id=study_id,
         subject_label=payload.subject_label,
         participant_id=payload.participant_id,
-        entry_code=_generate_entry_code(db),
         status="pending",
         collection_start=payload.collection_start,
         collection_end=payload.collection_end,
     )
     db.add(subject)
+    db.flush()  # need subject.id for the optional first registration
+    # Optionally create the first device registration in the same call (generates its code).
+    if payload.provider is not None:
+        _create_registration(db, subject.id, payload.provider)
     db.commit()
     db.refresh(subject)
     return subject
@@ -195,6 +226,49 @@ def delete_subject(
             db.execute(delete(model).where(model.provider_account_id.in_(acct_ids)))
         db.execute(delete(ProviderAccount).where(ProviderAccount.id.in_(acct_ids)))
     db.delete(subj)
+    db.commit()
+
+
+@router.post("/subjects/{subject_id}/registrations", response_model=RegistrationOut, status_code=201)
+def add_registration(
+    subject_id: int,
+    payload: RegistrationCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> ProviderAccount:
+    """Add a device registration for a subject (generates a per-device entry code). Study admin.
+
+    A subject may have at most one registration per provider (Fitbit and/or Garmin)."""
+    subj = db.get(Subject, subject_id)
+    if subj is None:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    assert_study_admin(db, user, subj.study_id)
+    acct = _create_registration(db, subject_id, payload.provider)
+    db.commit()
+    db.refresh(acct)
+    return acct
+
+
+@router.delete("/subjects/{subject_id}/registrations/{registration_id}", status_code=204)
+def delete_registration(
+    subject_id: int,
+    registration_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> None:
+    """Delete an unlinked device registration + its stray data. Revoke a linked one first."""
+    acct = db.get(ProviderAccount, registration_id)
+    if acct is None or acct.subject_id != subject_id:
+        raise HTTPException(status_code=404, detail="Registration not found")
+    subj = db.get(Subject, subject_id)
+    assert_study_admin(db, user, subj.study_id)
+    if acct.registered:
+        raise HTTPException(
+            status_code=409, detail="Device is linked — revoke its access before deleting."
+        )
+    for model in (Subscription, DailyHealth, HealthDataPoint, ConsolidationState, HealthData, PairedDevice):
+        db.execute(delete(model).where(model.provider_account_id == acct.id))
+    db.delete(acct)
     db.commit()
 
 
@@ -395,36 +469,65 @@ def sync_subscriptions(
 
 @router.post("/subjects/{subject_id}/revoke")
 def revoke_subject(
-    subject_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    subject_id: int,
+    provider: str | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> dict:
-    """Revoke a subject's wearable authorization: revoke the grant at Google, then mark the
-    account unregistered and drop its tokens. Idempotent. Requires study-admin on the
-    subject's study."""
+    """Revoke a subject's wearable authorization: revoke the grant at the provider, then mark the
+    account(s) unregistered and drop their tokens. Idempotent. Requires study-admin.
+
+    With `provider` set, revokes just that device; otherwise revokes every linked device.
+    """
     assert_study_admin(db, user, study_id_for_subject(db, subject_id))
-    acct = _fitbit_account(db, subject_id)
-    was_registered = acct.registered
-    revoked_at_google = revoke_account(db, acct)
+    accounts = _subject_accounts(db, subject_id)
+    if provider is not None:
+        accounts = [a for a in accounts if a.provider == provider]
+    targets = [a for a in accounts if a.registered] or accounts
+    if not targets:
+        raise HTTPException(status_code=404, detail="No provider account for that subject")
+    results = []
+    for acct in targets:
+        was_registered = acct.registered
+        revoked_at_provider = revoke_account(db, acct)
+        results.append(
+            {
+                "provider_account_id": acct.id,
+                "provider": acct.provider,
+                "was_registered": was_registered,
+                "revoked_at_provider": revoked_at_provider,
+                "registered": acct.registered,
+            }
+        )
     db.commit()
-    return {
-        "subject_id": subject_id,
-        "provider_account_id": acct.id,
-        "was_registered": was_registered,
-        "revoked_at_google": revoked_at_google,
-        "registered": acct.registered,
-    }
+    return {"subject_id": subject_id, "revoked": results}
 
 
-def _fitbit_account(db: Session, subject_id: int) -> ProviderAccount:
+def _subject_accounts(db: Session, subject_id: int) -> list[ProviderAccount]:
+    """All of a subject's device registrations (404 if the subject doesn't exist)."""
     if db.get(Subject, subject_id) is None:
         raise HTTPException(status_code=404, detail="Subject not found")
+    return list(
+        db.scalars(
+            select(ProviderAccount)
+            .where(ProviderAccount.subject_id == subject_id)
+            .order_by(ProviderAccount.id)
+        )
+    )
+
+
+def _require_account(db: Session, subject_id: int, provider: str) -> ProviderAccount:
+    """The subject's registration for a specific provider (404 if none)."""
     acct = db.scalar(
         select(ProviderAccount).where(
             ProviderAccount.subject_id == subject_id,
-            ProviderAccount.provider == fitbit_gh.NAME,
+            ProviderAccount.provider == provider,
         )
     )
     if acct is None:
-        raise HTTPException(status_code=404, detail="No fitbit account for that subject")
+        if db.get(Subject, subject_id) is None:
+            raise HTTPException(status_code=404, detail="Subject not found")
+        raise HTTPException(status_code=404, detail=f"No {provider} account for that subject")
     return acct
 
 
@@ -443,7 +546,8 @@ def consolidate_subject(
     if (end - start).days > 120:
         raise HTTPException(status_code=400, detail="range too large (max 120 days)")
     assert_study_admin(db, user, study_id_for_subject(db, subject_id))
-    acct = _fitbit_account(db, subject_id)
+    # Consolidation is a Google *pull*; Garmin self-aggregates from pushes, so it has no pull path.
+    acct = _require_account(db, subject_id, fitbit_gh.NAME)
     days = []
     d = start
     while d <= end:
@@ -467,6 +571,12 @@ def list_daily(
 ) -> list[dict]:
     """List a subject's consolidated daily rows (most recent first). Requires study view."""
     assert_study_view(db, user, study_id_for_subject(db, subject_id))
+    provider_by_acct = {
+        a.id: a.provider
+        for a in db.scalars(
+            select(ProviderAccount).where(ProviderAccount.subject_id == subject_id)
+        )
+    }
     rows = db.scalars(
         select(DailyHealth)
         .where(DailyHealth.subject_id == subject_id)
@@ -475,6 +585,7 @@ def list_daily(
     return [
         {
             "date": r.local_date.isoformat(),
+            "provider": provider_by_acct.get(r.provider_account_id),
             "steps": r.steps,
             "distance_m": r.distance_m,
             "calories": r.calories,
@@ -532,16 +643,24 @@ def list_day_points(
     offset for display.
     """
     assert_study_view(db, user, study_id_for_subject(db, subject_id))
-    acct = _fitbit_account(db, subject_id)
+    accounts = _subject_accounts(db, subject_id)
+    provider_by_acct = {a.id: a.provider for a in accounts}
+    if not accounts:
+        return []
     rows = db.scalars(
         select(HealthDataPoint)
         .where(
-            HealthDataPoint.provider_account_id == acct.id,
+            HealthDataPoint.provider_account_id.in_(provider_by_acct.keys()),
             HealthDataPoint.local_date == day,
         )
         .order_by(HealthDataPoint.datatype, HealthDataPoint.start_time)
     )
-    return [_point_to_dict(r) for r in rows]
+    out = []
+    for r in rows:
+        item = _point_to_dict(r)
+        item["provider"] = provider_by_acct.get(r.provider_account_id)
+        out.append(item)
+    return out
 
 
 def _device_to_dict(r: PairedDevice) -> dict:
@@ -576,8 +695,13 @@ def list_devices(
     Snapshots are refreshed during consolidation of a recent day; battery/sync reflect the last
     such pull (`updated_at`). Empty if the subject's grant lacks the settings.readonly scope."""
     assert_study_view(db, user, study_id_for_subject(db, subject_id))
-    acct = _fitbit_account(db, subject_id)
-    return _devices_for_account(db, acct.id)
+    accounts = _subject_accounts(db, subject_id)
+    out: list[dict] = []
+    for acct in accounts:
+        for dev in _devices_for_account(db, acct.id):
+            dev["provider"] = acct.provider
+            out.append(dev)
+    return out
 
 
 @router.get("/subjects/{subject_id}/export")
@@ -592,8 +716,9 @@ def export_subject(
     points (incl. sleep stages) nested underneath. Optional [start, end] date filter. Study view."""
     assert_study_view(db, user, study_id_for_subject(db, subject_id))
     subj = db.get(Subject, subject_id)
-    acct = _fitbit_account(db, subject_id)
-    payload = _subject_export_payload(db, subj, acct, start, end)
+    if subj is None:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    payload = _subject_export_payload(db, subj, start, end)
     payload["range"] = {
         "start": start.isoformat() if start else None,
         "end": end.isoformat() if end else None,
@@ -602,27 +727,42 @@ def export_subject(
 
 
 def _subject_export_payload(
-    db: Session, subj: Subject, acct: ProviderAccount | None, start: date | None, end: date | None
+    db: Session, subj: Subject, start: date | None, end: date | None
 ) -> dict:
-    """{subject, days[ summary + nested intraday points ]} for one subject. Used by the subject
-    and whole-study exports. `acct` may be None (unenrolled subject) → empty days."""
+    """{subject, days[ summary + nested intraday points ]} for one subject across ALL its device
+    registrations (each day/point tagged with its provider). Used by the subject and whole-study
+    exports."""
+    accounts = list(
+        db.scalars(select(ProviderAccount).where(ProviderAccount.subject_id == subj.id))
+    )
     subject = {
         "id": subj.id,
         "subject_label": subj.subject_label,
-        "entry_code": subj.entry_code,
+        "participant_id": subj.participant_id,
         "study_id": subj.study_id,
         "status": subj.status,
-        "provider": acct.provider if acct else None,
-        "registered": bool(acct and acct.registered),
-        "health_user_id": acct.health_user_id if acct else None,
+        "registrations": [
+            {
+                "provider": a.provider,
+                "entry_code": a.entry_code,
+                "registered": a.registered,
+                "health_user_id": a.health_user_id,
+            }
+            for a in accounts
+        ],
+        "devices": [],
     }
-    if acct is None:
-        subject["devices"] = []
+    for a in accounts:
+        for dev in _devices_for_account(db, a.id):
+            dev["provider"] = a.provider
+            subject["devices"].append(dev)
+    if not accounts:
         return {"subject": subject, "days": []}
-    subject["devices"] = _devices_for_account(db, acct.id)
 
-    dq = select(DailyHealth).where(DailyHealth.provider_account_id == acct.id)
-    pq = select(HealthDataPoint).where(HealthDataPoint.provider_account_id == acct.id)
+    acct_ids = [a.id for a in accounts]
+    provider_by_acct = {a.id: a.provider for a in accounts}
+    dq = select(DailyHealth).where(DailyHealth.provider_account_id.in_(acct_ids))
+    pq = select(HealthDataPoint).where(HealthDataPoint.provider_account_id.in_(acct_ids))
     if start:
         dq = dq.where(DailyHealth.local_date >= start)
         pq = pq.where(HealthDataPoint.local_date >= start)
@@ -634,11 +774,14 @@ def _subject_export_payload(
     for r in db.scalars(
         pq.order_by(HealthDataPoint.local_date, HealthDataPoint.datatype, HealthDataPoint.start_time)
     ):
-        by_day.setdefault(r.local_date, []).append(_point_to_dict(r))
+        item = _point_to_dict(r)
+        item["provider"] = provider_by_acct.get(r.provider_account_id)
+        by_day.setdefault((r.provider_account_id, r.local_date), []).append(item)
 
     days = [
         {
             "date": d.local_date.isoformat(),
+            "provider": provider_by_acct.get(d.provider_account_id),
             "tz_offset_seconds": d.tz_offset_seconds,
             "steps": d.steps,
             "distance_m": d.distance_m,
@@ -653,9 +796,9 @@ def _subject_export_payload(
             "mvpa_minutes": d.mvpa_minutes,
             "metrics": d.metrics,
             "point_count": d.point_count,
-            "points": by_day.get(d.local_date, []),
+            "points": by_day.get((d.provider_account_id, d.local_date), []),
         }
-        for d in db.scalars(dq.order_by(DailyHealth.local_date))
+        for d in db.scalars(dq.order_by(DailyHealth.local_date, DailyHealth.provider_account_id))
     ]
     return {"subject": subject, "days": days}
 
@@ -675,13 +818,7 @@ def export_study(
     assert_study_view(db, user, study_id)
     subjects_out = []
     for subj in db.scalars(select(Subject).where(Subject.study_id == study_id).order_by(Subject.id)):
-        acct = db.scalar(
-            select(ProviderAccount).where(
-                ProviderAccount.subject_id == subj.id,
-                ProviderAccount.provider == fitbit_gh.NAME,
-            )
-        )
-        subjects_out.append(_subject_export_payload(db, subj, acct, start, end))
+        subjects_out.append(_subject_export_payload(db, subj, start, end))
     return {
         "study": {"id": study.id, "name": study.name, "description": study.description},
         "range": {
@@ -715,44 +852,50 @@ def list_subjects(
     )
     out: list[SubjectStatusOut] = []
     for subj in subjects:
-        acct = db.scalar(
-            select(ProviderAccount).where(
-                ProviderAccount.subject_id == subj.id,
-                ProviderAccount.provider == fitbit_gh.NAME,
+        accounts = list(
+            db.scalars(
+                select(ProviderAccount)
+                .where(ProviderAccount.subject_id == subj.id)
+                .order_by(ProviderAccount.id)
             )
         )
         item = SubjectStatusOut.model_validate(subj)
-        item.registered = bool(acct and acct.registered)
-        if acct is not None:
-            _attach_health_summary(db, item, subj, acct.id, today, week_ago, has_data)
+        item.registrations = [
+            _registration_summary(db, subj, acct, today, week_ago, has_data) for acct in accounts
+        ]
+        item.registered = any(r.registered for r in item.registrations)
+        _aggregate_registrations(item)
         out.append(item)
     return out
 
 
-def _attach_health_summary(db, item, subj, account_id, today, week_ago, has_data) -> None:
-    """Fill the list-view battery + data-freshness fields for one linked account."""
+def _registration_summary(db, subj, acct, today, week_ago, has_data) -> RegistrationOut:
+    """One device's battery + data-freshness summary for the list view."""
+    reg = RegistrationOut(
+        id=acct.id, provider=acct.provider, entry_code=acct.entry_code, registered=acct.registered
+    )
     # Lowest-battery device (nulls last) — surfaces the most concerning one.
     dev = db.scalar(
         select(PairedDevice)
-        .where(PairedDevice.provider_account_id == account_id)
+        .where(PairedDevice.provider_account_id == acct.id)
         .order_by(PairedDevice.battery_level.is_(None), PairedDevice.battery_level.asc())
     )
     if dev is not None:
-        item.battery_level = dev.battery_level
-        item.battery_status = dev.battery_status
-        item.battery_low = dev.battery_status in ("Low", "Empty") or (
+        reg.battery_level = dev.battery_level
+        reg.battery_status = dev.battery_status
+        reg.battery_low = dev.battery_status in ("Low", "Empty") or (
             dev.battery_level is not None and dev.battery_level <= 20
         )
 
-    item.last_data_date = db.scalar(
+    reg.last_data_date = db.scalar(
         select(func.max(DailyHealth.local_date)).where(
-            DailyHealth.provider_account_id == account_id, has_data
+            DailyHealth.provider_account_id == acct.id, has_data
         )
     )
-    item.days_with_data_7 = (
+    reg.days_with_data_7 = (
         db.scalar(
             select(func.count(func.distinct(DailyHealth.local_date))).where(
-                DailyHealth.provider_account_id == account_id,
+                DailyHealth.provider_account_id == acct.id,
                 DailyHealth.local_date >= week_ago,
                 DailyHealth.local_date <= today,
                 has_data,
@@ -761,17 +904,36 @@ def _attach_health_summary(db, item, subj, account_id, today, week_ago, has_data
         or 0
     )
 
-    # Stale only flags subjects we'd *expect* fresh data from: linked and inside their
+    # Stale only flags devices we'd *expect* fresh data from: linked and inside the subject's
     # collection window (a closed/not-yet-started window makes "no recent data" expected).
     in_window = not (
         (subj.collection_end and subj.collection_end < today)
         or (subj.collection_start and subj.collection_start > today)
     )
-    item.data_stale = bool(
-        item.registered
+    reg.data_stale = bool(
+        acct.registered
         and in_window
-        and (item.last_data_date is None or item.last_data_date < today - timedelta(days=2))
+        and (reg.last_data_date is None or reg.last_data_date < today - timedelta(days=2))
     )
+    return reg
+
+
+def _aggregate_registrations(item: SubjectStatusOut) -> None:
+    """Roll up the per-device summaries to the subject-level (most-concerning) fields."""
+    regs = item.registrations
+    if not regs:
+        return
+    # Lowest battery across devices (nulls last).
+    batt = [r for r in regs if r.battery_level is not None]
+    if batt:
+        worst = min(batt, key=lambda r: r.battery_level)
+        item.battery_level = worst.battery_level
+        item.battery_status = worst.battery_status
+    item.battery_low = any(r.battery_low for r in regs)
+    dates = [r.last_data_date for r in regs if r.last_data_date is not None]
+    item.last_data_date = max(dates) if dates else None
+    item.days_with_data_7 = max((r.days_with_data_7 for r in regs), default=0)
+    item.data_stale = any(r.data_stale for r in regs)
 
 
 # --- Researcher (user) management — superuser only ------------------------------

@@ -5,6 +5,9 @@
 services:
   backend:
     build: ./backend
+    # All settings load from .env (Google + Garmin OAuth, DB, webhook secret, …). Garmin needs
+    # GARMIN_CONSUMER_KEY/SECRET + GARMIN_OAUTH_REDIRECT_URI set; the per-datatype Garmin push URLs
+    # (/webhooks/garmin/{dailies,sleeps,…}) are reverse-proxied here just like /enroll & /webhooks.
     env_file:
       - .env
     ports:

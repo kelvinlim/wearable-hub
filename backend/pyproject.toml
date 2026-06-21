@@ -1,6 +1,6 @@
 [project]
 name = "wearable-hub-backend"
-version = "0.2.0"
+version = "0.3.0"
 description = "Wearable Hub backend — register research subjects' wearables (Google Health API / Fitbit, Garmin later) and ingest their data."
 requires-python = ">=3.12"
 dependencies = [
@@ -14,6 +14,7 @@ dependencies = [
     "cryptography>=44.0",
     "google-auth>=2.37",
     "requests>=2.32",  # google.auth.transport.requests needs it for token refresh
+    "requests-oauthlib>=2.0",  # Garmin OAuth 1.0a (HMAC-SHA1 signing)
     "httpx>=0.28",
     "python-multipart>=0.0.18",
     "apscheduler>=3.11",

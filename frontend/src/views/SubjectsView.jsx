@@ -4,6 +4,7 @@ import {
   BatteryFull, BatteryWarning, AlertTriangle,
 } from "lucide-react";
 import { api } from "../api";
+import { ALL_PROVIDERS, providerLabel } from "../lib";
 import { Card, Button, Badge, Input, Th, Td, Empty } from "../ui";
 import SubjectDetail from "./SubjectDetail";
 
@@ -14,6 +15,40 @@ function windowLabel(s) {
 }
 
 const dash = <span className="text-gray-300 dark:text-neutral-600">—</span>;
+
+// Per-subject device registrations: a chip per device (provider + entry code + linked dot), plus
+// an "Add device" control for the providers not yet registered.
+function DevicesCell({ s, canAdmin, guard, onChanged }) {
+  const regs = s.registrations || [];
+  const present = new Set(regs.map((r) => r.provider));
+  const missing = ALL_PROVIDERS.filter((p) => !present.has(p));
+  return (
+    <div className="flex flex-col items-start gap-1" onClick={(e) => e.stopPropagation()}>
+      {regs.map((r) => (
+        <Badge key={r.id} tone={r.registered ? "green" : "gray"} className="gap-1">
+          <span className="font-semibold">{providerLabel(r.provider)}</span>
+          <code className="rounded bg-black/5 px-1 text-[11px] dark:bg-white/10">{r.entry_code}</code>
+          {r.registered ? "✓" : ""}
+        </Badge>
+      ))}
+      {regs.length === 0 && <span className="text-xs text-gray-300">no devices</span>}
+      {canAdmin && missing.length > 0 && (
+        <div className="flex gap-1">
+          {missing.map((p) => (
+            <button
+              key={p}
+              title={`Add ${providerLabel(p)} registration`}
+              onClick={() => guard(async () => { await api.addRegistration(s.id, p); onChanged(); })}
+              className="inline-flex items-center gap-0.5 rounded border border-dashed border-gray-300 px-1.5 py-0.5 text-[11px] text-gray-500 hover:border-maroon hover:text-maroon dark:border-neutral-700 dark:hover:border-gold dark:hover:text-gold"
+            >
+              <Plus className="h-3 w-3" />{providerLabel(p)}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // --- Sorting ---------------------------------------------------------------
 const SORTERS = {
@@ -95,6 +130,7 @@ export default function SubjectsView({ studyId, canAdmin, guard }) {
   const [adding, setAdding] = useState(false);
   const [label, setLabel] = useState("");
   const [pid, setPid] = useState("");
+  const [provider, setProvider] = useState("fitbit_gh");
   const [editing, setEditing] = useState(null); // subject being edited, or null
   const [sort, setSort] = useState({ key: "linked", dir: "desc" }); // linked-first by default
 
@@ -106,13 +142,19 @@ export default function SubjectsView({ studyId, canAdmin, guard }) {
     return [...subjects].sort((a, b) => {
       const av = f(a), bv = f(b);
       let c = av < bv ? -1 : av > bv ? 1 : 0;
-      if (c === 0) c = (a.entry_code || "").localeCompare(b.entry_code || "");
+      if (c === 0) c = a.id - b.id;
       return sort.dir === "asc" ? c : -c;
     });
   }, [subjects, sort]);
 
   const load = useCallback(() => {
-    if (studyId != null) guard(async () => setSubjects(await api.listSubjects(studyId)));
+    if (studyId != null)
+      guard(async () => {
+        const list = await api.listSubjects(studyId);
+        setSubjects(list);
+        // Keep the open detail panel in sync after add-device / revoke / edit.
+        setSelected((sel) => (sel ? list.find((x) => x.id === sel.id) || null : null));
+      });
   }, [studyId, guard]);
   useEffect(() => {
     setSelected(null);
@@ -148,16 +190,27 @@ export default function SubjectsView({ studyId, canAdmin, guard }) {
                 await api.createSubject(studyId, {
                   subject_label: label.trim() || null,
                   participant_id: pid.trim() || null,
+                  provider,
                 });
                 setLabel("");
                 setPid("");
+                setProvider("fitbit_gh");
                 setAdding(false);
                 load();
               });
             }}
           >
             <Input placeholder="Study ID (optional)" value={pid} onChange={(e) => setPid(e.target.value)} autoFocus />
-            <Input placeholder="Label — Google account (optional)" value={label} onChange={(e) => setLabel(e.target.value)} />
+            <Input placeholder="Label — account (optional)" value={label} onChange={(e) => setLabel(e.target.value)} />
+            <select
+              value={provider}
+              onChange={(e) => setProvider(e.target.value)}
+              className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+            >
+              {ALL_PROVIDERS.map((p) => (
+                <option key={p} value={p}>{providerLabel(p)}</option>
+              ))}
+            </select>
             <Button type="submit">Create — generates entry code</Button>
             <Button type="button" variant="subtle" onClick={() => setAdding(false)}>Cancel</Button>
           </form>
@@ -167,7 +220,7 @@ export default function SubjectsView({ studyId, canAdmin, guard }) {
           <table className="w-full">
             <thead className="border-b border-gray-100 dark:border-neutral-800">
               <tr>
-                <Th>Entry code</Th>
+                <Th>Devices</Th>
                 <Th>Study ID</Th>
                 <SortTh label="Label" sortKey="label" sort={sort} onSort={onSort} />
                 <Th>Battery</Th>
@@ -191,7 +244,7 @@ export default function SubjectsView({ studyId, canAdmin, guard }) {
                       (selected?.id === s.id ? "bg-maroon/5 dark:bg-maroon/20" : "")
                     }
                   >
-                    <Td><code className="rounded bg-gray-100 px-1.5 py-0.5 text-xs dark:bg-neutral-800">{s.entry_code}</code></Td>
+                    <Td><DevicesCell s={s} canAdmin={canAdmin} guard={guard} onChanged={load} /></Td>
                     <Td className="font-medium">{s.participant_id || <span className="text-gray-300">—</span>}</Td>
                     <Td>{s.subject_label || <span className="text-gray-300">—</span>}</Td>
                     <Td><BatteryCell s={s} /></Td>
@@ -214,7 +267,8 @@ export default function SubjectsView({ studyId, canAdmin, guard }) {
                             <button
                               title="Delete subject (not yet linked)"
                               onClick={() => {
-                                if (!confirm(`Delete subject ${s.entry_code}? This can't be undone.`)) return;
+                                const who = s.participant_id || s.subject_label || `#${s.id}`;
+                                if (!confirm(`Delete subject ${who} and its device registrations? This can't be undone.`)) return;
                                 guard(async () => {
                                   await api.deleteSubject(s.id);
                                   if (selected?.id === s.id) setSelected(null);
@@ -296,7 +350,8 @@ function EditSubjectModal({ subject, guard, onClose, onSaved }) {
         <div onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-between border-b border-gray-100 p-4 dark:border-neutral-800">
             <h3 className="font-display text-base font-semibold text-maroon dark:text-gold">
-              Edit subject <code className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-xs dark:bg-neutral-800">{subject.entry_code}</code>
+              Edit subject
+              <code className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-xs dark:bg-neutral-800">{subject.participant_id || subject.subject_label || `#${subject.id}`}</code>
             </h3>
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="h-4 w-4" /></button>
           </div>

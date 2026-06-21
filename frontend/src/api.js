@@ -43,6 +43,13 @@ export const api = {
       body: JSON.stringify(body),
     }),
   deleteSubject: (subjectId) => req(`/admin/subjects/${subjectId}`, { method: "DELETE" }),
+  addRegistration: (subjectId, provider) =>
+    req(`/admin/subjects/${subjectId}/registrations`, {
+      method: "POST",
+      body: JSON.stringify({ provider }),
+    }),
+  deleteRegistration: (subjectId, registrationId) =>
+    req(`/admin/subjects/${subjectId}/registrations/${registrationId}`, { method: "DELETE" }),
   daily: (subjectId) => req(`/admin/subjects/${subjectId}/daily`),
   dayPoints: (subjectId, day) =>
     req(`/admin/subjects/${subjectId}/daily/${day}/points`),
@@ -65,8 +72,11 @@ export const api = {
     req(`/admin/subjects/${subjectId}/consolidate?start=${start}&end=${end}`, {
       method: "POST",
     }),
-  revoke: (subjectId) =>
-    req(`/admin/subjects/${subjectId}/revoke`, { method: "POST" }),
+  revoke: (subjectId, provider) =>
+    req(
+      `/admin/subjects/${subjectId}/revoke${provider ? `?provider=${provider}` : ""}`,
+      { method: "POST" },
+    ),
 
   // RBAC management
   listUsers: () => req("/admin/users"),
