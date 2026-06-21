@@ -4,6 +4,19 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
+## [0.3.1] — 2026-06-21
+
+### Changed
+
+- **Provider is now a per-study, immutable attribute.** Each study declares its wearable
+  (`fitbit_gh` or `garmin`) at creation; it cannot be changed afterward. All of a study's subjects
+  inherit that provider, so a subject has exactly one device registration. Creating a subject now
+  **auto-creates** its registration (and entry code) using the study's provider — no per-subject
+  device choice. `add_registration` only re-issues a code for the study's provider (rejects a
+  mismatched one). Migration `0015` adds `studies.provider` with a `server_default` of `fitbit_gh`,
+  **grandfathering all existing studies to Fitbit**. Console: studies get a required Device selector
+  at creation (shown read-only after) + a Device column; the subject form drops the device dropdown.
+
 ## [0.3.0] — 2026-06-21
 
 ### Added

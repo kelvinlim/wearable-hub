@@ -2,11 +2,12 @@ import React, { useEffect, useState, useCallback } from "react";
 import { Plus, Download, Trash2, HeartPulse } from "lucide-react";
 import { api } from "../api";
 import { Card, Button, Badge, Input, Select, Th, Td, Empty, SectionTitle } from "../ui";
-import { download, studyDailyCsv, studyPointsCsv } from "../lib";
+import { download, studyDailyCsv, studyPointsCsv, ALL_PROVIDERS, providerLabel } from "../lib";
 
 export default function StudiesView({ studies, selectedStudyId, onStudyChange, reloadStudies, canAdmin, isSuper, guard }) {
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
+  const [provider, setProvider] = useState("fitbit_gh");
   const selected = studies.find((s) => s.id === selectedStudyId) || null;
 
   return (
@@ -18,7 +19,7 @@ export default function StudiesView({ studies, selectedStudyId, onStudyChange, r
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="border-b border-gray-100 dark:border-neutral-800">
-              <tr><Th>Name</Th><Th>Intraday</Th></tr>
+              <tr><Th>Name</Th><Th>Device</Th><Th>Intraday</Th></tr>
             </thead>
             <tbody>
               {studies.map((s) => (
@@ -34,10 +35,11 @@ export default function StudiesView({ studies, selectedStudyId, onStudyChange, r
                     <div className="font-medium">{s.name}</div>
                     {s.description && <div className="text-xs text-gray-400">{s.description}</div>}
                   </Td>
+                  <Td><Badge tone="maroon">{providerLabel(s.provider)}</Badge></Td>
                   <Td><IntradayFlags study={s} /></Td>
                 </tr>
               ))}
-              {studies.length === 0 && <tr><td colSpan={2}><Empty>No studies.</Empty></td></tr>}
+              {studies.length === 0 && <tr><td colSpan={3}><Empty>No studies.</Empty></td></tr>}
             </tbody>
           </table>
         </div>
@@ -48,13 +50,20 @@ export default function StudiesView({ studies, selectedStudyId, onStudyChange, r
               e.preventDefault();
               if (!name.trim()) return;
               guard(async () => {
-                await api.createStudy({ name: name.trim(), description: desc.trim() || null });
-                setName(""); setDesc(""); reloadStudies();
+                await api.createStudy({ name: name.trim(), description: desc.trim() || null, provider });
+                setName(""); setDesc(""); setProvider("fitbit_gh"); reloadStudies();
               });
             }}
           >
             <Input placeholder="New study name" value={name} onChange={(e) => setName(e.target.value)} />
             <Input placeholder="Description (optional)" value={desc} onChange={(e) => setDesc(e.target.value)} />
+            <label className="flex items-center gap-2 text-sm">
+              <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Device</span>
+              <Select value={provider} onChange={(e) => setProvider(e.target.value)}>
+                {ALL_PROVIDERS.map((p) => <option key={p} value={p}>{providerLabel(p)}</option>)}
+              </Select>
+              <span className="text-xs text-gray-400">(can't be changed later)</span>
+            </label>
             <Button type="submit" className="self-start"><Plus className="h-4 w-4" /> Create study</Button>
           </form>
         )}
@@ -115,7 +124,11 @@ function SettingsCard({ study, canAdmin, guard, onChanged }) {
 
   return (
     <Card className="p-4">
-      <SectionTitle className="mb-3">{study.name}</SectionTitle>
+      <div className="mb-3 flex items-center gap-2">
+        <SectionTitle>{study.name}</SectionTitle>
+        <Badge tone="maroon">{providerLabel(study.provider)}</Badge>
+        <span className="text-xs text-gray-400">device fixed at creation</span>
+      </div>
 
       {canAdmin && (
         <div className="mb-4 space-y-2">

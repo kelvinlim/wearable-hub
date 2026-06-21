@@ -78,7 +78,14 @@ export default function App() {
           guard={guard}
         />
       )}
-      {view === "subjects" && <SubjectsView studyId={selectedStudyId} canAdmin={canAdmin} guard={guard} />}
+      {view === "subjects" && (
+        <SubjectsView
+          studyId={selectedStudyId}
+          studyProvider={studies.find((s) => s.id === selectedStudyId)?.provider || "fitbit_gh"}
+          canAdmin={canAdmin}
+          guard={guard}
+        />
+      )}
       {view === "researchers" && me.is_superuser && <ResearchersView guard={guard} />}
       {view === "about" && <AboutView me={me} />}
 
