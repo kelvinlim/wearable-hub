@@ -84,6 +84,7 @@ export const api = {
     req("/admin/users", { method: "POST", body: JSON.stringify(body) }),
   deleteUser: (userId) => req(`/admin/users/${userId}`, { method: "DELETE" }),
   listMembers: (studyId) => req(`/admin/studies/${studyId}/members`),
+  assignableUsers: (studyId) => req(`/admin/studies/${studyId}/assignable-users`),
   addMember: (studyId, body) =>
     req(`/admin/studies/${studyId}/members`, {
       method: "POST",

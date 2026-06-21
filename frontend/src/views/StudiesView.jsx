@@ -168,13 +168,35 @@ function SettingsCard({ study, canAdmin, guard, onChanged }) {
   );
 }
 
+const NEW_STAFF = "__new__";
+
 function MembersCard({ studyId, guard }) {
   const [members, setMembers] = useState([]);
-  const [email, setEmail] = useState("");
+  const [assignable, setAssignable] = useState([]);
+  const [pick, setPick] = useState("");       // selected researcher email, or NEW_STAFF, or ""
+  const [newEmail, setNewEmail] = useState("");
+  const [newName, setNewName] = useState("");
   const [role, setRole] = useState("member");
 
-  const load = useCallback(() => guard(async () => setMembers(await api.listMembers(studyId))), [guard, studyId]);
+  const load = useCallback(() => guard(async () => {
+    const [m, a] = await Promise.all([api.listMembers(studyId), api.assignableUsers(studyId)]);
+    setMembers(m);
+    setAssignable(a);
+  }), [guard, studyId]);
   useEffect(() => { load(); }, [load]);
+
+  const addingNew = pick === NEW_STAFF;
+  const email = addingNew ? newEmail.trim() : pick;
+
+  const submit = (e) => {
+    e.preventDefault();
+    if (!email) return;
+    guard(async () => {
+      await api.addMember(studyId, { email, name: addingNew ? (newName.trim() || null) : null, role });
+      setPick(""); setNewEmail(""); setNewName(""); setRole("member");
+      load();
+    });
+  };
 
   return (
     <Card className="overflow-hidden">
@@ -194,15 +216,24 @@ function MembersCard({ studyId, guard }) {
           {members.length === 0 && <tr><td colSpan={3}><Empty>No members.</Empty></td></tr>}
         </tbody>
       </table>
-      <form
-        className="flex flex-wrap items-center gap-2 border-t border-gray-100 p-4 dark:border-neutral-800"
-        onSubmit={(e) => { e.preventDefault(); if (!email.trim()) return; guard(async () => { await api.addMember(studyId, { email: email.trim(), role }); setEmail(""); load(); }); }}
-      >
-        <Input placeholder="researcher@email" value={email} onChange={(e) => setEmail(e.target.value)} />
+      <form className="flex flex-wrap items-center gap-2 border-t border-gray-100 p-4 dark:border-neutral-800" onSubmit={submit}>
+        <Select value={pick} onChange={(e) => setPick(e.target.value)} className="min-w-[14rem]">
+          <option value="">Select a researcher…</option>
+          {assignable.map((u) => (
+            <option key={u.id} value={u.email}>{u.name ? `${u.name} — ${u.email}` : u.email}</option>
+          ))}
+          <option value={NEW_STAFF}>➕ Add new researcher…</option>
+        </Select>
+        {addingNew && (
+          <>
+            <Input placeholder="researcher@email" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} autoFocus />
+            <Input placeholder="Name (optional)" value={newName} onChange={(e) => setNewName(e.target.value)} />
+          </>
+        )}
         <Select value={role} onChange={(e) => setRole(e.target.value)}><option value="member">member</option><option value="admin">admin</option></Select>
-        <Button type="submit" disabled={!email.trim()}>Add / update</Button>
+        <Button type="submit" disabled={!email}>Add / update</Button>
       </form>
-      <p className="px-4 pb-4 text-xs text-gray-400">People must first be added under “Research staff” by a superuser.</p>
+      <p className="px-4 pb-4 text-xs text-gray-400">Pick an existing researcher, or “Add new researcher…” to onboard someone by email (created as a non-superuser).</p>
     </Card>
   );
 }
