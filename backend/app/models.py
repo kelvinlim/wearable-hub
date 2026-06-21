@@ -65,6 +65,9 @@ class Study(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
+    # The wearable provider for ALL subjects in this study. Chosen at creation and IMMUTABLE
+    # thereafter (no update path). Existing studies are grandfathered to 'fitbit_gh' (migration 0015).
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, server_default="fitbit_gh")
     created_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     # Opt-in: store downsampled intraday heart-rate for this study's subjects.
     ingest_intraday_hr: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

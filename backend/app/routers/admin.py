@@ -100,7 +100,15 @@ def _create_registration(db: Session, subject_id: int, provider: str) -> Provide
 def create_study(
     payload: StudyCreate, db: Session = Depends(get_db), user: User = Depends(require_superuser)
 ) -> Study:
-    study = Study(name=payload.name, description=payload.description, created_by_user_id=user.id)
+    """Create a study. `provider` (the wearable for all its subjects) is set here and IMMUTABLE."""
+    if payload.provider not in _PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {payload.provider}")
+    study = Study(
+        name=payload.name,
+        description=payload.description,
+        provider=payload.provider,
+        created_by_user_id=user.id,
+    )
     db.add(study)
     db.commit()
     db.refresh(study)
@@ -128,7 +136,8 @@ def update_study(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Study:
-    """Update study settings (e.g. opt in to intraday heart-rate). Study admin or superuser."""
+    """Update study settings (e.g. opt in to intraday heart-rate). Study admin or superuser.
+    `provider` is intentionally not updatable here — it's fixed at creation (StudyUpdate omits it)."""
     study = db.get(Study, study_id)
     if study is None:
         raise HTTPException(status_code=404, detail="Study not found")
@@ -153,13 +162,12 @@ def create_subject(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Subject:
-    if db.get(Study, study_id) is None:
+    study = db.get(Study, study_id)
+    if study is None:
         raise HTTPException(status_code=404, detail="Study not found")
     assert_study_admin(db, user, study_id)
     if payload.collection_end and payload.collection_start and payload.collection_end < payload.collection_start:
         raise HTTPException(status_code=400, detail="collection_end must be >= collection_start")
-    if payload.provider is not None and payload.provider not in _PROVIDERS:
-        raise HTTPException(status_code=400, detail=f"Unknown provider: {payload.provider}")
     subject = Subject(
         study_id=study_id,
         subject_label=payload.subject_label,
@@ -169,10 +177,9 @@ def create_subject(
         collection_end=payload.collection_end,
     )
     db.add(subject)
-    db.flush()  # need subject.id for the optional first registration
-    # Optionally create the first device registration in the same call (generates its code).
-    if payload.provider is not None:
-        _create_registration(db, subject.id, payload.provider)
+    db.flush()  # need subject.id for the registration
+    # The device is fixed by the study: auto-create the one registration + its entry code.
+    _create_registration(db, subject.id, study.provider)
     db.commit()
     db.refresh(subject)
     return subject
@@ -236,14 +243,22 @@ def add_registration(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> ProviderAccount:
-    """Add a device registration for a subject (generates a per-device entry code). Study admin.
+    """(Re-)create a subject's device registration + entry code. Study admin.
 
-    A subject may have at most one registration per provider (Fitbit and/or Garmin)."""
+    The device is fixed by the study, so the provider must match `study.provider`; a subject has
+    exactly one registration. Normally created automatically at subject creation — this endpoint is
+    for re-issuing a code if the registration was deleted."""
     subj = db.get(Subject, subject_id)
     if subj is None:
         raise HTTPException(status_code=404, detail="Subject not found")
     assert_study_admin(db, user, subj.study_id)
-    acct = _create_registration(db, subject_id, payload.provider)
+    study = db.get(Study, subj.study_id)
+    if study and payload.provider != study.provider:
+        raise HTTPException(
+            status_code=409,
+            detail=f"This study uses {study.provider}; cannot register a {payload.provider} device.",
+        )
+    acct = _create_registration(db, subject_id, study.provider if study else payload.provider)
     db.commit()
     db.refresh(acct)
     return acct

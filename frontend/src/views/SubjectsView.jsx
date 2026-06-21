@@ -4,7 +4,7 @@ import {
   BatteryFull, BatteryWarning, AlertTriangle,
 } from "lucide-react";
 import { api } from "../api";
-import { ALL_PROVIDERS, providerLabel } from "../lib";
+import { providerLabel } from "../lib";
 import { Card, Button, Badge, Input, Th, Td, Empty } from "../ui";
 import SubjectDetail from "./SubjectDetail";
 
@@ -16,12 +16,11 @@ function windowLabel(s) {
 
 const dash = <span className="text-gray-300 dark:text-neutral-600">—</span>;
 
-// Per-subject device registrations: a chip per device (provider + entry code + linked dot), plus
-// an "Add device" control for the providers not yet registered.
-function DevicesCell({ s, canAdmin, guard, onChanged }) {
+// Per-subject device registration: the subject's one device (the study's provider) — a chip with
+// the entry code + linked dot. Normally auto-created with the subject; the re-issue button only
+// appears if the registration was deleted.
+function DevicesCell({ s, studyProvider, canAdmin, guard, onChanged }) {
   const regs = s.registrations || [];
-  const present = new Set(regs.map((r) => r.provider));
-  const missing = ALL_PROVIDERS.filter((p) => !present.has(p));
   return (
     <div className="flex flex-col items-start gap-1" onClick={(e) => e.stopPropagation()}>
       {regs.map((r) => (
@@ -31,21 +30,16 @@ function DevicesCell({ s, canAdmin, guard, onChanged }) {
           {r.registered ? "✓" : ""}
         </Badge>
       ))}
-      {regs.length === 0 && <span className="text-xs text-gray-300">no devices</span>}
-      {canAdmin && missing.length > 0 && (
-        <div className="flex gap-1">
-          {missing.map((p) => (
-            <button
-              key={p}
-              title={`Add ${providerLabel(p)} registration`}
-              onClick={() => guard(async () => { await api.addRegistration(s.id, p); onChanged(); })}
-              className="inline-flex items-center gap-0.5 rounded border border-dashed border-gray-300 px-1.5 py-0.5 text-[11px] text-gray-500 hover:border-maroon hover:text-maroon dark:border-neutral-700 dark:hover:border-gold dark:hover:text-gold"
-            >
-              <Plus className="h-3 w-3" />{providerLabel(p)}
-            </button>
-          ))}
-        </div>
+      {regs.length === 0 && canAdmin && (
+        <button
+          title={`Issue ${providerLabel(studyProvider)} entry code`}
+          onClick={() => guard(async () => { await api.addRegistration(s.id, studyProvider); onChanged(); })}
+          className="inline-flex items-center gap-0.5 rounded border border-dashed border-gray-300 px-1.5 py-0.5 text-[11px] text-gray-500 hover:border-maroon hover:text-maroon dark:border-neutral-700 dark:hover:border-gold dark:hover:text-gold"
+        >
+          <Plus className="h-3 w-3" />{providerLabel(studyProvider)} code
+        </button>
       )}
+      {regs.length === 0 && !canAdmin && <span className="text-xs text-gray-300">no device</span>}
     </div>
   );
 }
@@ -124,13 +118,12 @@ function LatestCell({ s }) {
   return <span className={"whitespace-nowrap text-xs " + (s.data_stale ? "text-red-600" : "text-gray-500")}>{rel}</span>;
 }
 
-export default function SubjectsView({ studyId, canAdmin, guard }) {
+export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", canAdmin, guard }) {
   const [subjects, setSubjects] = useState([]);
   const [selected, setSelected] = useState(null);
   const [adding, setAdding] = useState(false);
   const [label, setLabel] = useState("");
   const [pid, setPid] = useState("");
-  const [provider, setProvider] = useState("fitbit_gh");
   const [editing, setEditing] = useState(null); // subject being edited, or null
   const [sort, setSort] = useState({ key: "linked", dir: "desc" }); // linked-first by default
 
@@ -190,11 +183,9 @@ export default function SubjectsView({ studyId, canAdmin, guard }) {
                 await api.createSubject(studyId, {
                   subject_label: label.trim() || null,
                   participant_id: pid.trim() || null,
-                  provider,
                 });
                 setLabel("");
                 setPid("");
-                setProvider("fitbit_gh");
                 setAdding(false);
                 load();
               });
@@ -202,15 +193,7 @@ export default function SubjectsView({ studyId, canAdmin, guard }) {
           >
             <Input placeholder="Study ID (optional)" value={pid} onChange={(e) => setPid(e.target.value)} autoFocus />
             <Input placeholder="Label — account (optional)" value={label} onChange={(e) => setLabel(e.target.value)} />
-            <select
-              value={provider}
-              onChange={(e) => setProvider(e.target.value)}
-              className="rounded-md border border-gray-300 bg-white px-2 py-1.5 text-sm dark:border-neutral-700 dark:bg-neutral-900"
-            >
-              {ALL_PROVIDERS.map((p) => (
-                <option key={p} value={p}>{providerLabel(p)}</option>
-              ))}
-            </select>
+            <span className="self-center text-xs text-gray-400">Device: <b>{providerLabel(studyProvider)}</b> (from study)</span>
             <Button type="submit">Create — generates entry code</Button>
             <Button type="button" variant="subtle" onClick={() => setAdding(false)}>Cancel</Button>
           </form>
@@ -244,7 +227,7 @@ export default function SubjectsView({ studyId, canAdmin, guard }) {
                       (selected?.id === s.id ? "bg-maroon/5 dark:bg-maroon/20" : "")
                     }
                   >
-                    <Td><DevicesCell s={s} canAdmin={canAdmin} guard={guard} onChanged={load} /></Td>
+                    <Td><DevicesCell s={s} studyProvider={studyProvider} canAdmin={canAdmin} guard={guard} onChanged={load} /></Td>
                     <Td className="font-medium">{s.participant_id || <span className="text-gray-300">—</span>}</Td>
                     <Td>{s.subject_label || <span className="text-gray-300">—</span>}</Td>
                     <Td><BatteryCell s={s} /></Td>

@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict
 class StudyCreate(BaseModel):
     name: str
     description: str | None = None
+    provider: str = "fitbit_gh"  # 'fitbit_gh' | 'garmin' — immutable after creation
 
 
 class StudyOut(BaseModel):
@@ -18,6 +19,7 @@ class StudyOut(BaseModel):
     id: int
     name: str
     description: str | None
+    provider: str = "fitbit_gh"
     ingest_intraday_hr: bool = False
     ingest_intraday_hrv: bool = False
     ingest_intraday_spo2: bool = False
@@ -39,8 +41,8 @@ class SubjectCreate(BaseModel):
     participant_id: str | None = None
     collection_start: date | None = None
     collection_end: date | None = None
-    # Optional: also create the subject's first device registration (generates its entry code).
-    provider: str | None = None  # 'fitbit_gh' | 'garmin'
+    # No `provider` here: a subject's device is fixed by its study (Study.provider). Creating a
+    # subject auto-creates its one registration with that provider (generates the entry code).
 
 
 class SubjectUpdate(BaseModel):
