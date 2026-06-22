@@ -15,7 +15,7 @@ implementation status in this app. Host: **`https://lnpitask.umn.edu`**.
 |---|---|---|
 | **OAuth callback** | `https://lnpitask.umn.edu/wearable/enroll/callback` | One `/enroll/callback` handles both providers, dispatched by params. Set as `GARMIN_OAUTH_REDIRECT_URI`. |
 | **Privacy policy** | `https://lnpitask.umn.edu/privacy` | Root; also reachable at `…/wearable/privacy`. Same copy Google's OAuth review uses. |
-| **Brand image** | `https://lnpitask.umn.edu/wearable/branding.png` | 300×300 PNG. ⚠️ See [brand-image note](#brand-image-png-vs-jpg) — only the PNG is proxied today. |
+| **Brand image** | `https://lnpitask.umn.edu/wearable/branding.png` | 300×300. Also served as **`…/wearable/branding.jpg`** and **`…/wearable/icon`** — use whichever the validator accepts. |
 
 ## 2. Data endpoints (push URLs)
 
@@ -51,20 +51,14 @@ rolled up yet). Every datatype is accepted regardless of whether it's mapped.
   inside the prefix.
 - **Sync the host nginx.** The `/wearable/...` blocks must be live on the host nginx, then reloaded.
 
-### Brand image: PNG vs JPG
+### Brand image formats
 
-The backend serves `/branding.png`, `/branding.jpg`, and `/icon` (all 200), but the host nginx
-currently only proxies **`/wearable/branding.png`**. If Garmin's branding-image validator rejects
-PNG and needs the **JPG**, add this block to `deploy/nginx/wearable-hub.conf` and reload:
+All three are served by the backend and proxied by the host nginx (verified live, `nginx -t` OK), so
+pick whichever Garmin's branding-image validator accepts:
 
-```nginx
-location = /wearable/branding.jpg {
-    proxy_pass http://127.0.0.1:8010/branding.jpg;
-    proxy_set_header Host              $host;
-    proxy_set_header X-Forwarded-Proto $scheme;
-    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
-}
-```
+- `https://lnpitask.umn.edu/wearable/branding.png` (300×300 PNG)
+- `https://lnpitask.umn.edu/wearable/branding.jpg` (JPEG variant — some validators reject PNG)
+- `https://lnpitask.umn.edu/wearable/icon` (extension-less)
 
 ## 4. Implementation status (where this lives in code)
 
