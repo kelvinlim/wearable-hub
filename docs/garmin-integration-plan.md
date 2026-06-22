@@ -120,8 +120,13 @@ Everything else → raw `health_data` + `metrics` passthrough.
 
 ## Prerequisites / open items
 
+> **Implemented & deployed (v0.3.x).** For the concrete portal-registration URLs (callback / privacy
+> / brand image / per-datatype data endpoints + deregistration) and their implementation status, see
+> [garmin-portal-registration.md](garmin-portal-registration.md). The endpoints are now namespaced
+> under `…/wearable/webhooks/garmin/<type>`.
+
 - Garmin Health API program approval + consumer key/secret; register the `{datatype}` webhook URLs
-  (e.g. `https://lnpitask.umn.edu/webhooks/garmin/dailies`, …) and the OAuth callback in the
+  (now `https://lnpitask.umn.edu/wearable/webhooks/garmin/dailies`, …) and the OAuth callback in the
   Garmin developer portal.
 - Confirm exact Garmin Health endpoint paths + the `user/id`, `backfill`, and `user/registration`
   routes against current Garmin docs (the legacy app used `connectapi.garmin.com` for OAuth only).
