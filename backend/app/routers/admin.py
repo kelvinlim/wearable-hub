@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
-from app import consolidation
+from app import consolidation, garmin_backfill
 from app.accounts import revoke_account
 from app.config import get_settings
 from app.db import get_db
@@ -570,6 +570,30 @@ def consolidate_subject(
         days.append({"date": d.isoformat(), "status": state.status, "detail": state.detail})
         d += timedelta(days=1)
     return {"subject_id": subject_id, "provider_account_id": acct.id, "days": days}
+
+
+@router.post("/subjects/{subject_id}/backfill")
+def backfill_subject(
+    subject_id: int,
+    start: date,
+    end: date,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """On-demand Garmin backfill: ask Garmin to re-push historical summaries over [start, end].
+
+    Garmin-only — Fitbit/Google backfills via `/consolidate` (a pull); Garmin has no pull, so this
+    fires `/backfill/{type}` requests instead. **Async**: returns the queued requests; the data
+    arrives later via the push webhooks (and must be for an enabled webhook type to land). The range
+    is chunked into <=90-day windows per Garmin's cap. Requires study-admin."""
+    if end < start:
+        raise HTTPException(status_code=400, detail="end must be >= start")
+    if (end - start).days > 730:
+        raise HTTPException(status_code=400, detail="range too large (max 2 years)")
+    assert_study_admin(db, user, study_id_for_subject(db, subject_id))
+    acct = _require_account(db, subject_id, garmin.NAME)
+    requests = garmin_backfill.backfill_account(db, acct, start, end)
+    return {"subject_id": subject_id, "provider_account_id": acct.id, "requests": requests}
 
 
 @router.post("/consolidate/run-due")
