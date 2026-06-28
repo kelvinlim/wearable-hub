@@ -22,6 +22,7 @@ Garmin shapes (Health API summary endpoints; prior art garminrec/db_code2.py:475
   - `respiration`: avg/min/max breaths/min from timeOffsetEpochToBreaths.
   - `bodyComps`: weight/BMI/body fat/water/muscle/bone.
   - `userMetrics`: VO2max + fitness age.
+  - `skinTemp` / `skinTemperature`: overnight skin-temp deviation from baseline (°C, sleep-only).
   - `epochs` and the rest: landed raw (no daily mapping in v1).
 """
 
@@ -312,6 +313,33 @@ def _apply_user_metrics(db: Session, account: ProviderAccount, d: date, item: di
     row.pulled_at = datetime.utcnow()
 
 
+def _apply_skin_temp(db: Session, account: ProviderAccount, d: date, item: dict) -> None:
+    """Skin Temperature push -> metrics["skin_temp"].
+
+    Garmin reports overnight wrist skin temperature as a **deviation from the user's learned
+    baseline** (°C), not an absolute temperature, over the sleep window. Field naming varies by
+    payload version (`avgDeviationCelsius` / `deviationCelsius` / `averageDeviationCelsius`); take
+    the first present. Sleep-only, one summary per night.
+    """
+    row = _get_or_create_daily(db, account, d)
+    deviation = next(
+        (
+            _num(item.get(k))
+            for k in ("avgDeviationCelsius", "averageDeviationCelsius", "deviationCelsius")
+            if _num(item.get(k)) is not None
+        ),
+        None,
+    )
+    _merge_metrics(row, "skin_temp", {
+        "deviation_c": deviation,
+        "min_deviation_c": _num(item.get("minDeviationCelsius")),
+        "max_deviation_c": _num(item.get("maxDeviationCelsius")),
+        "duration_seconds": _num(item.get("durationInSeconds")),
+        "raw": item,
+    })
+    row.pulled_at = datetime.utcnow()
+
+
 def _store_intraday_hr(db: Session, account: ProviderAccount, d: date, item: dict) -> None:
     """Write Garmin intraday HR (dailies.timeOffsetHeartRateSamples) as N-min average buckets.
 
@@ -380,6 +408,8 @@ _APPLIERS = {
     "respiration": _apply_respiration,
     "bodyComps": _apply_body_comp,
     "userMetrics": _apply_user_metrics,
+    "skinTemp": _apply_skin_temp,
+    "skinTemperature": _apply_skin_temp,
 }
 
 
