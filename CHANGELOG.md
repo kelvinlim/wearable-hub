@@ -4,6 +4,36 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
+## [0.3.3] — 2026-06-28
+
+### Added
+
+- **Garmin historical backfill.** Garmin has no pull API, so historical data is obtained by asking
+  Garmin to re-push summaries to the registered webhooks via `GET /backfill/{summaryType}`. New
+  `garmin.request_backfill()` (OAuth1-signed; async `202`, `409` duplicate tolerated) +
+  `app/garmin_backfill.py`, which chunks a date range into **≤90-day windows** (Garmin's per-request
+  cap, configurable) and fans out across the configured summary types, recording per-`(type, window)`
+  status without failing the batch on one bad request. New endpoint
+  `POST /admin/subjects/{id}/backfill` (Garmin-only — Fitbit/Google still uses `/consolidate`;
+  study-admin scoped, range capped at 2 years). Settings `garmin_backfill_max_window_days` (90) and
+  `garmin_backfill_types`. Backfilled data flows through the existing `/webhooks/garmin/{type}` →
+  `garmin_ingest` path (idempotent; only **enabled** webhook types actually deliver).
+- **Garmin Skin Temperature mapping.** `skinTemp` / `skinTemperature` pushes are aggregated into
+  `daily_health.metrics["skin_temp"]` (overnight deviation-from-baseline °C, sleep-only) instead of
+  only landing raw. Field naming varies by payload version, so `deviation_c` takes the first present
+  of `avgDeviationCelsius` / `averageDeviationCelsius` / `deviationCelsius`; `raw` is always kept.
+- **`frontend/build-check.sh`** — runs the production frontend build (`node:20-alpine` + `npm ci`
+  against the committed lockfile) in a throwaway container, so a green run matches the image build
+  without installing Node on the host and without writing `node_modules` into the working tree.
+
+### Changed
+
+- **Subject-detail data control is now provider-aware.** The console shows "Pull + consolidate" for
+  Fitbit/Google subjects (synchronous pull) and "Request backfill" for Garmin subjects (async
+  re-push, with an inline notice that data arrives later via webhook); a subject with both devices
+  gets both. Fixes the prior bug where the pull button on a Garmin subject hit the Fitbit-only
+  consolidate endpoint and errored with `No fitbit_gh account`.
+
 ## [0.3.2] — 2026-06-21
 
 ### Changed
