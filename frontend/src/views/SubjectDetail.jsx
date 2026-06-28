@@ -15,6 +15,7 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
   const [start, setStart] = useState(subject.collection_start || today());
   const [end, setEnd] = useState(subject.collection_end || today());
   const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState("");
   const [exFrom, setExFrom] = useState("");
   const [exTo, setExTo] = useState("");
   const [exFmt, setExFmt] = useState("json");
@@ -37,6 +38,7 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
   useEffect(() => {
     setOpenDay(null);
     setDayPts([]);
+    setNotice("");
     setStart(subject.collection_start || today());
     setEnd(subject.collection_end || today());
   }, [subject.id, subject.collection_start, subject.collection_end]);
@@ -56,6 +58,35 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
       if (exFmt === "json") download(`${base}.json`, "application/json", JSON.stringify(data, null, 2));
       else if (exFmt === "csv-daily") download(`${base}-daily.csv`, "text/csv", dailyCsv(data));
       else download(`${base}-points.csv`, "text/csv", pointsCsv(data));
+    });
+
+  // Per-provider data backfill differs: Fitbit/Google is a synchronous server-side *pull*
+  // (consolidate); Garmin has no pull — it re-pushes asynchronously via the backfill API.
+  const providers = new Set((subject.registrations || []).map((r) => r.provider));
+  const hasFitbit = providers.has("fitbit_gh");
+  const hasGarmin = providers.has("garmin");
+
+  const datesValid = () => {
+    if (!start || !end) throw new Error("Pick both a start and end date.");
+    if (end < start) throw new Error("End date must be on or after the start date.");
+  };
+  const doConsolidate = () =>
+    guard(async () => {
+      datesValid();
+      setBusy(true);
+      try { await api.consolidate(subject.id, start, end); await load(); await loadDevices(); }
+      finally { setBusy(false); }
+    });
+  const doBackfill = () =>
+    guard(async () => {
+      datesValid();
+      setBusy(true);
+      setNotice("");
+      try {
+        const res = await api.backfill(subject.id, start, end);
+        const n = (res.requests || []).length;
+        setNotice(`Backfill requested (${n} window${n === 1 ? "" : "s"}). Garmin re-pushes historical data via webhook over the next while — refresh later to see it.`);
+      } finally { setBusy(false); }
     });
 
   const multiDevice = new Set(daily.map((d) => d.provider).filter(Boolean)).size > 1;
@@ -107,27 +138,35 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
           <span className="text-xs text-gray-400">(blank = all)</span>
         </div>
         {canAdmin && (
-          <div className="flex flex-wrap items-center gap-2 text-sm">
-            <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Consolidate</span>
+          <div className="flex w-full flex-wrap items-center gap-2 text-sm">
+            <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Backfill</span>
             <input type="date" value={start} onChange={(e) => setStart(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800" />
             <span className="text-gray-400">→</span>
             <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800" />
-            <Button
-              disabled={busy || !start || !end}
-              title={!start || !end ? "Pick both a start and end date" : undefined}
-              onClick={() =>
-                guard(async () => {
-                  if (!start || !end) throw new Error("Pick both a start and end date to pull.");
-                  if (end < start) throw new Error("End date must be on or after the start date.");
-                  setBusy(true);
-                  try { await api.consolidate(subject.id, start, end); await load(); await loadDevices(); } finally { setBusy(false); }
-                })
-              }
-            >
-              {busy ? "Pulling…" : "Pull + consolidate"}
-            </Button>
+            {hasFitbit && (
+              <Button
+                disabled={busy || !start || !end}
+                title={!start || !end ? "Pick both a start and end date" : "Fitbit/Google: pull + consolidate"}
+                onClick={doConsolidate}
+              >
+                {busy ? "Pulling…" : "Pull + consolidate"}
+              </Button>
+            )}
+            {hasGarmin && (
+              <Button
+                variant={hasFitbit ? "ghost" : undefined}
+                disabled={busy || !start || !end}
+                title={!start || !end ? "Pick both a start and end date" : "Garmin: request a re-push (async)"}
+                onClick={doBackfill}
+              >
+                {busy ? "Requesting…" : "Request backfill"}
+              </Button>
+            )}
             <span className="text-xs text-gray-400">(both required)</span>
             <span className="text-xs text-gray-400">· revoke a device from its chip above</span>
+            {notice && (
+              <p className="basis-full text-xs text-emerald-600 dark:text-emerald-400">{notice}</p>
+            )}
           </div>
         )}
       </div>
