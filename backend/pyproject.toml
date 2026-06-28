@@ -1,6 +1,6 @@
 [project]
 name = "wearable-hub-backend"
-version = "0.3.2"
+version = "0.3.3"
 description = "Wearable Hub backend — register research subjects' wearables (Google Health API / Fitbit, Garmin later) and ingest their data."
 requires-python = ">=3.12"
 dependencies = [
