@@ -55,6 +55,11 @@ class Settings(BaseSettings):
     garmin_access_token_url: str = "https://connectapi.garmin.com/oauth-service/oauth/access_token"
     # Garmin Health (wellness) REST base — used for the user-id lookup and deregistration.
     garmin_api_base: str = "https://apis.garmin.com/wellness-api/rest"
+    # Backfill (historical re-push) — Garmin caps each request window; experience puts it at 90 days,
+    # so long ranges are chunked. Summary types requested by default (must match a registered/enabled
+    # webhook, else the re-pushed data is dropped). Comma-separated; override per deployment.
+    garmin_backfill_max_window_days: int = 90
+    garmin_backfill_types: str = "dailies,sleeps,stressDetails,hrv,pulseox,respiration,bodyComps,userMetrics,skinTemp"
 
     # --- Researcher auth (Google login + RBAC) ---
     # Reuses GOOGLE_CLIENT_ID/SECRET. The researcher login callback (add this exact URI to the

@@ -112,6 +112,27 @@ def fetch_user_id(uat: str, secret: str) -> str | None:
     return resp.json().get("userId")
 
 
+def request_backfill(uat: str, secret: str, summary_type: str, start_epoch: int, end_epoch: int) -> int:
+    """Ask Garmin to re-push historical `summary_type` summaries over [start, end] (UTC epoch secs).
+
+    GET {garmin_api_base}/backfill/{summary_type}?summaryStartTimeInSeconds=..&summaryEndTimeInSeconds=..
+    (OAuth1-signed). **Asynchronous**: Garmin returns 202 Accepted, then re-pushes the data to the
+    registered `/webhooks/garmin/{summary_type}` endpoints over the following minutes/hours — so the
+    webhook for this type must be enabled, or the data is dropped. The window must be <= 90 days
+    (Garmin caps it; callers chunk). A duplicate/overlapping request returns 409 — treated as
+    already-queued, not an error. Returns the HTTP status code.
+    """
+    s = get_settings()
+    resp = _user_session(uat, secret).get(
+        f"{s.garmin_api_base}/backfill/{summary_type}",
+        params={"summaryStartTimeInSeconds": start_epoch, "summaryEndTimeInSeconds": end_epoch},
+        timeout=_TIMEOUT,
+    )
+    if resp.status_code not in (200, 202, 409):
+        resp.raise_for_status()
+    return resp.status_code
+
+
 def deregister(uat: str, secret: str) -> None:
     """Best-effort: revoke the user's Garmin registration. Idempotent.
 

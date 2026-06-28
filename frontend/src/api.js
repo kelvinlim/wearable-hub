@@ -72,6 +72,10 @@ export const api = {
     req(`/admin/subjects/${subjectId}/consolidate?start=${start}&end=${end}`, {
       method: "POST",
     }),
+  backfill: (subjectId, start, end) =>
+    req(`/admin/subjects/${subjectId}/backfill?start=${start}&end=${end}`, {
+      method: "POST",
+    }),
   revoke: (subjectId, provider) =>
     req(
       `/admin/subjects/${subjectId}/revoke${provider ? `?provider=${provider}` : ""}`,
