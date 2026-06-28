@@ -32,8 +32,9 @@ All follow `https://lnpitask.umn.edu/wearable/webhooks/garmin/<type>`. Configure
 | Respiration | `respiration` | ✅ aggregated → `daily_health` (avg/min/max) |
 | Body Composition | `bodyComps` | ✅ aggregated → `daily_health.metrics` |
 | User Metrics | `userMetrics` | ✅ aggregated → `daily_health.metrics` (VO2max, fitness age) |
+| Skin Temperature | `skinTemp` (also `skinTemperature`) | ✅ aggregated → `daily_health.metrics` (overnight deviation °C) |
 | Epochs | `epochs` | ▫️ raw-landed in `health_data` (no daily mapping yet) |
-| Health Snapshot, Activities, Activity Details, Blood Pressures, Skin Temp, MoveIQ, … | `<type>` | ▫️ raw-landed in `health_data` |
+| Health Snapshot, Activities, Activity Details, Blood Pressures, MoveIQ, … | `<type>` | ▫️ raw-landed in `health_data` |
 | **Deregistration** | `deregistrations` | ✅ **required** — marks the account unregistered (revocation) |
 
 ✅ = mapped into `daily_health`; ▫️ = accepted + stored raw (still safe to register — it just isn't

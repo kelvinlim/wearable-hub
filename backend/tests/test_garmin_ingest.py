@@ -85,6 +85,18 @@ _HRV = {
     "lastNightAvg": 42,
 }
 
+_SKIN_TEMP = {
+    "userId": "U1",
+    "userAccessToken": "uat",
+    "calendarDate": "2026-06-19",
+    "startTimeInSeconds": 1781762400,
+    "startTimeOffsetInSeconds": -21600,
+    "durationInSeconds": 28800,
+    "avgDeviationCelsius": -0.4,
+    "minDeviationCelsius": -1.2,
+    "maxDeviationCelsius": 0.3,
+}
+
 
 def _daily(db, acct):
     return db.scalar(
@@ -160,6 +172,37 @@ def test_intraday_hr_opt_in(db):
         )
     )
     assert len(pts2) == len(pts)
+
+
+def test_skin_temp_mapping(db):
+    acct = _seed(db)
+    garmin_ingest.ingest_push(db, "skinTemp", {"skinTemp": [_SKIN_TEMP]})
+    row = _daily(db, acct)
+    assert row is not None
+    st = row.metrics["skin_temp"]
+    assert st["deviation_c"] == pytest.approx(-0.4)
+    assert st["min_deviation_c"] == pytest.approx(-1.2)
+    assert st["max_deviation_c"] == pytest.approx(0.3)
+    assert st["duration_seconds"] == 28800
+
+
+def test_skin_temp_field_name_fallback(db):
+    """`deviation_c` takes the first present of the spelling variants."""
+    acct = _seed(db)
+    item = {k: v for k, v in _SKIN_TEMP.items() if k != "avgDeviationCelsius"}
+    item["deviationCelsius"] = -0.7
+    garmin_ingest.ingest_push(db, "skinTemperature", {"skinTemperature": [item]})
+    row = _daily(db, acct)
+    assert row.metrics["skin_temp"]["deviation_c"] == pytest.approx(-0.7)
+
+
+def test_skin_temp_merge_does_not_clobber_dailies(db):
+    acct = _seed(db)
+    garmin_ingest.ingest_push(db, "dailies", {"dailies": [_DAILIES]})
+    garmin_ingest.ingest_push(db, "skinTemp", {"skinTemp": [_SKIN_TEMP]})
+    row = _daily(db, acct)
+    assert row.steps == 8421  # dailies survives
+    assert row.metrics["skin_temp"]["deviation_c"] == pytest.approx(-0.4)
 
 
 def test_unresolved_account_lands_raw_only(db):
