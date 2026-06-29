@@ -14,6 +14,7 @@ across restarts, like the Google flow.
 """
 
 import logging
+import time
 
 from requests_oauthlib import OAuth1Session
 
@@ -25,6 +26,10 @@ log = logging.getLogger(__name__)
 NAME = "garmin"
 
 _TIMEOUT = 30.0
+# 429 backoff for backfill: exponential from this base, capped, unless the response carries a
+# Retry-After (which we honor instead).
+_BACKOFF_BASE = 5.0
+_BACKOFF_CAP = 60.0
 
 
 # --- OAuth 1.0a -----------------------------------------------------------------
@@ -112,6 +117,17 @@ def fetch_user_id(uat: str, secret: str) -> str | None:
     return resp.json().get("userId")
 
 
+def _retry_after_seconds(resp, default: float) -> float:
+    """Seconds to wait from a 429's `Retry-After` header (delta-seconds form), else `default`."""
+    raw = resp.headers.get("Retry-After")
+    if raw:
+        try:
+            return max(0.0, float(raw))
+        except (TypeError, ValueError):
+            pass
+    return default
+
+
 def request_backfill(uat: str, secret: str, summary_type: str, start_epoch: int, end_epoch: int) -> int:
     """Ask Garmin to re-push historical `summary_type` summaries over [start, end] (UTC epoch secs).
 
@@ -120,14 +136,27 @@ def request_backfill(uat: str, secret: str, summary_type: str, start_epoch: int,
     registered `/webhooks/garmin/{summary_type}` endpoints over the following minutes/hours — so the
     webhook for this type must be enabled, or the data is dropped. The window must be <= 90 days
     (Garmin caps it; callers chunk). A duplicate/overlapping request returns 409 — treated as
-    already-queued, not an error. Returns the HTTP status code.
+    already-queued, not an error.
+
+    Garmin rate-limits backfill aggressively, so a **429** is retried with capped exponential
+    backoff (honoring `Retry-After` when present), up to `garmin_backfill_max_retries`. Returns the
+    final HTTP status code; raises on any other non-2xx/409.
     """
     s = get_settings()
-    resp = _user_session(uat, secret).get(
-        f"{s.garmin_api_base}/backfill/{summary_type}",
-        params={"summaryStartTimeInSeconds": start_epoch, "summaryEndTimeInSeconds": end_epoch},
-        timeout=_TIMEOUT,
-    )
+    session = _user_session(uat, secret)
+    url = f"{s.garmin_api_base}/backfill/{summary_type}"
+    params = {"summaryStartTimeInSeconds": start_epoch, "summaryEndTimeInSeconds": end_epoch}
+    max_retries = max(0, s.garmin_backfill_max_retries)
+    resp = None
+    for attempt in range(max_retries + 1):
+        resp = session.get(url, params=params, timeout=_TIMEOUT)
+        if resp.status_code != 429 or attempt == max_retries:
+            break
+        backoff = min(_BACKOFF_CAP, _BACKOFF_BASE * (2 ** attempt))
+        wait = _retry_after_seconds(resp, backoff)
+        log.info("Garmin backfill %s rate-limited (429); retry %d/%d in %.0fs",
+                 summary_type, attempt + 1, max_retries, wait)
+        time.sleep(wait)
     if resp.status_code not in (200, 202, 409):
         resp.raise_for_status()
     return resp.status_code

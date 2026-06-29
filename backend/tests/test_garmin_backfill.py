@@ -11,6 +11,7 @@ import pytest
 
 from app import garmin_backfill
 from app.models import ProviderAccount
+from app.providers import garmin
 
 
 def _epoch(d: date) -> int:
@@ -57,6 +58,7 @@ def acct():
 
 def _patch(monkeypatch, fn):
     monkeypatch.setattr(garmin_backfill, "decrypt", lambda x: x)
+    monkeypatch.setattr(garmin_backfill.time, "sleep", lambda *_: None)  # no real spacing in tests
     calls = []
 
     def fake(uat, secret, summary_type, start_epoch, end_epoch):
@@ -103,3 +105,89 @@ def test_backfill_requires_tokens(monkeypatch, acct):
     monkeypatch.setattr(garmin_backfill, "decrypt", lambda x: None)
     with pytest.raises(ValueError):
         garmin_backfill.backfill_account(None, acct, date(2026, 1, 1), date(2026, 1, 2), types=["dailies"])
+
+
+def test_backfill_spaces_requests(monkeypatch, acct):
+    # 3 types x 1 window = 3 requests -> 2 inter-request sleeps (none before the first).
+    sleeps = []
+    monkeypatch.setattr(garmin_backfill, "decrypt", lambda x: x)
+    monkeypatch.setattr(garmin_backfill.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(garmin_backfill.garmin, "request_backfill", lambda *a: 202)
+    garmin_backfill.backfill_account(
+        None, acct, date(2026, 1, 1), date(2026, 1, 5), types=["dailies", "sleeps", "hrv"]
+    )
+    assert len(sleeps) == 2
+    assert all(s > 0 for s in sleeps)
+
+
+def test_window_count():
+    assert garmin_backfill.window_count(date(2026, 1, 1), date(2026, 1, 10)) == 1
+    assert garmin_backfill.window_count(date(2026, 1, 1), date(2026, 4, 10)) == 2  # 100 days
+
+
+def test_run_backfill_opens_and_closes_own_session(monkeypatch, acct):
+    captured = {}
+
+    class FakeSession:
+        def get(self, model, pk):
+            captured["pk"] = pk
+            return acct
+
+        def close(self):
+            captured["closed"] = True
+
+    monkeypatch.setattr(garmin_backfill, "SessionLocal", lambda: FakeSession())
+    monkeypatch.setattr(
+        garmin_backfill, "backfill_account",
+        lambda db, account, start, end: [{"status": 202}],
+    )
+    garmin_backfill.run_backfill(7, date(2026, 1, 1), date(2026, 1, 2))
+    assert captured["pk"] == 7
+    assert captured.get("closed") is True
+
+
+# --- request_backfill 429 retry (provider layer) --------------------------------
+
+class _Resp:
+    def __init__(self, code, headers=None):
+        self.status_code = code
+        self.headers = headers or {}
+
+    def raise_for_status(self):
+        raise RuntimeError(f"HTTP {self.status_code}")
+
+
+def _fake_session(codes):
+    it = iter(codes)
+
+    class S:
+        def get(self, url, params=None, timeout=None):
+            return _Resp(next(it))
+
+    return S()
+
+
+def test_request_backfill_retries_then_succeeds(monkeypatch):
+    monkeypatch.setattr(garmin.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(garmin, "_user_session", lambda u, s: _fake_session([429, 429, 202]))
+    assert garmin.request_backfill("uat", "sec", "hrv", 1, 2) == 202
+
+
+def test_request_backfill_raises_after_exhausting_retries(monkeypatch):
+    monkeypatch.setattr(garmin.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(garmin, "_user_session", lambda u, s: _fake_session([429] * 20))
+    with pytest.raises(RuntimeError):
+        garmin.request_backfill("uat", "sec", "hrv", 1, 2)
+
+
+def test_retry_after_header_is_honored(monkeypatch):
+    waits = []
+    monkeypatch.setattr(garmin.time, "sleep", lambda s: waits.append(s))
+    monkeypatch.setattr(
+        garmin, "_user_session",
+        lambda u, s: type("S", (), {"get": lambda self, url, params=None, timeout=None:
+                                    _Resp(429, {"Retry-After": "12"})
+                                    if not waits else _Resp(202)})(),
+    )
+    assert garmin.request_backfill("uat", "sec", "hrv", 1, 2) == 202
+    assert waits == [12.0]
