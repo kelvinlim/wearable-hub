@@ -10,7 +10,7 @@ class Settings(BaseSettings):
 
     # --- App ---
     app_name: str = "Wearable Hub"
-    app_version: str = "0.3.6"  # keep in sync with backend/pyproject.toml + frontend/package.json
+    app_version: str = "0.3.7"  # keep in sync with backend/pyproject.toml + frontend/package.json
     environment: str = "dev"  # dev | prod
 
     # Public URL path prefix the app is served under on the host (e.g. "/wearable" on lnpitask,
@@ -93,6 +93,9 @@ class Settings(BaseSettings):
     # Intraday SpO2 (opt-in per study via `ingest_intraday_spo2`) is downsampled to N-minute
     # average buckets (bucket min preserved in payload). Set 0 to store raw samples (~390/day).
     spo2_downsample_minutes: int = 5
+    # Intraday stress (opt-in per study via `ingest_intraday_stress`, Garmin) is downsampled to
+    # N-minute average buckets (raw is ~3-min, ~480/day). Set 0 to store raw samples.
+    stress_downsample_minutes: int = 5
 
     # --- Project-level credentials for Tier-1 subscriber registration ---
     # Subscriber registration is a project op, NOT a user op (a subject's token gets 403).

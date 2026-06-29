@@ -77,6 +77,9 @@ class Study(Base):
     # Opt-in: store intraday steps/distance (downsampled to N-min sum buckets). Off by default —
     # the daily totals come from dailyRollUp regardless, so intraday is only the within-day curve.
     ingest_intraday_activity: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Opt-in: store intraday stress level (downsampled to N-min avg buckets). Garmin only — from the
+    # stress push's `timeOffsetStressLevelValues`; the daily avg/max stay in daily_health.metrics.
+    ingest_intraday_stress: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     created_by: Mapped["User | None"] = relationship(back_populates="studies")
