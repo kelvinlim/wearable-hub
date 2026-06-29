@@ -76,6 +76,8 @@ export const api = {
     req(`/admin/subjects/${subjectId}/backfill?start=${start}&end=${end}`, {
       method: "POST",
     }),
+  reprocess: (subjectId) =>
+    req(`/admin/subjects/${subjectId}/reprocess`, { method: "POST" }),
   revoke: (subjectId, provider) =>
     req(
       `/admin/subjects/${subjectId}/revoke${provider ? `?provider=${provider}` : ""}`,

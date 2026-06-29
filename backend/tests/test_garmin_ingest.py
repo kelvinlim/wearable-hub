@@ -325,6 +325,24 @@ def test_epochs_off_by_default(db):
     assert not pts
 
 
+def test_reprocess_repopulates_after_optin(db):
+    # Push stress while intraday is OFF: daily summary lands, but no intraday points.
+    acct = _seed(db)
+    garmin_ingest.ingest_push(db, "stressDetails", {"stressDetails": [_STRESS]})
+    before = list(db.scalars(select(HealthDataPoint).where(
+        HealthDataPoint.provider_account_id == acct.id, HealthDataPoint.datatype == "stress")))
+    assert not before
+    # Enable the opt-in, then reprocess the already-stored raw payload (no re-fetch).
+    study = db.get(Study, db.get(Subject, acct.subject_id).study_id)
+    study.ingest_intraday_stress = True
+    db.commit()
+    counts = garmin_ingest.reprocess_account(db, acct)
+    assert counts.get("stressDetails")  # applier ran over the stored raw row
+    after = list(db.scalars(select(HealthDataPoint).where(
+        HealthDataPoint.provider_account_id == acct.id, HealthDataPoint.datatype == "stress")))
+    assert after  # now populated from stored data, no Garmin call
+
+
 def test_unresolved_account_lands_raw_only(db):
     _seed(db)
     other = dict(_DAILIES, userId="UNKNOWN")

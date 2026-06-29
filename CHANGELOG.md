@@ -4,6 +4,18 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
+## [0.3.10] — 2026-06-29
+
+### Added
+
+- **Reprocess stored Garmin data (no re-fetch).** New `POST /admin/subjects/{id}/reprocess`
+  (`garmin_ingest.reprocess_account`) re-runs the per-datatype appliers over an account's
+  already-stored raw `health_data` to (re)derive `daily_health`/points — for when you enable an
+  intraday opt-in or change a mapping after data already arrived, without asking Garmin to re-push
+  (which it won't for an already-delivered window). Idempotent, doesn't re-land raw rows, returns
+  per-datatype counts. Console: a **Reprocess stored** button on Garmin subjects (next to backfill).
+  Replaces the one-off scripts previously used for the stress and body-battery rollouts.
+
 ## [0.3.9] — 2026-06-29
 
 ### Added
