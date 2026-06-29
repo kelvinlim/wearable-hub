@@ -13,7 +13,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
-from app import consolidation, garmin_backfill
+from app import consolidation, garmin_backfill, garmin_ingest
 from app.accounts import revoke_account
 from app.config import get_settings
 from app.db import get_db
@@ -607,6 +607,25 @@ def backfill_subject(
         "windows": windows,
         "requests": len(types) * windows,
     }
+
+
+@router.post("/subjects/{subject_id}/reprocess")
+def reprocess_subject(
+    subject_id: int,
+    start: date | None = None,
+    end: date | None = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Re-derive Garmin `daily_health`/points from already-stored raw payloads — **no re-fetch**.
+
+    Garmin-only. Use after enabling an intraday opt-in or a mapping change to populate metrics/points
+    from data Garmin already delivered (Fitbit/Google re-derives via `/consolidate` instead).
+    Idempotent. Synchronous (local DB work); returns per-datatype applied-item counts. Study-admin."""
+    assert_study_admin(db, user, study_id_for_subject(db, subject_id))
+    acct = _require_account(db, subject_id, garmin.NAME)
+    counts = garmin_ingest.reprocess_account(db, acct, start=start, end=end)
+    return {"subject_id": subject_id, "provider_account_id": acct.id, "counts": counts}
 
 
 @router.post("/consolidate/run-due")

@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 
 from app import dailywrite
 from app.config import get_settings
+from app.db import SessionLocal
 from app.models import (
     DailyHealth,
     HealthData,
@@ -576,3 +577,58 @@ def ingest_push(db: Session, datatype_hint: str, body) -> dict[int, ProviderAcco
                 log.exception("Garmin %s aggregation failed for account %s", datatype, account.id)
     db.commit()
     return touched
+
+
+# --- reprocess (re-derive from already-stored raw) ------------------------------
+
+def reprocess_account(
+    db: Session, account: ProviderAccount, *, start: date | None = None, end: date | None = None
+) -> dict[str, int]:
+    """Re-run the per-datatype appliers over this account's already-stored raw `health_data`.
+
+    Use after enabling an opt-in (e.g. intraday stress) or a mapping change to (re)derive
+    `daily_health` / `health_data_points` from data Garmin already delivered — **no re-fetch**.
+    Idempotent (the appliers upsert), and it does NOT re-land raw rows (calls appliers directly, not
+    `ingest_push`). Optional [start, end] filters by each item's local date. Commits; returns
+    per-datatype applied-item counts.
+    """
+    rows = db.scalars(
+        select(HealthData).where(HealthData.provider_account_id == account.id)
+    ).all()
+    counts: dict[str, int] = {}
+    for r in rows:
+        for datatype, items in (r.payload or {}).items():
+            applier = _APPLIERS.get(datatype)
+            if applier is None:
+                continue
+            for item in (items if isinstance(items, list) else [items]):
+                if not isinstance(item, dict):
+                    continue
+                d = _local_date(item)
+                if d is None or (start and d < start) or (end and d > end):
+                    continue
+                try:
+                    applier(db, account, d, item)
+                    counts[datatype] = counts.get(datatype, 0) + 1
+                except Exception:  # noqa: BLE001 — one bad item shouldn't drop the rest
+                    log.exception("Garmin reprocess %s failed for account %s", datatype, account.id)
+    db.commit()
+    return counts
+
+
+def run_reprocess(account_id: int, start: date | None = None, end: date | None = None) -> dict[str, int]:
+    """Background entry point: open a fresh session, load the account, reprocess. Never raises."""
+    db = SessionLocal()
+    try:
+        account = db.get(ProviderAccount, account_id)
+        if account is None:
+            log.warning("Garmin reprocess: account %s no longer exists", account_id)
+            return {}
+        counts = reprocess_account(db, account, start=start, end=end)
+        log.info("Garmin reprocess account %s: %s", account_id, counts)
+        return counts
+    except Exception:  # noqa: BLE001
+        log.exception("Garmin reprocess run failed for account %s", account_id)
+        return {}
+    finally:
+        db.close()

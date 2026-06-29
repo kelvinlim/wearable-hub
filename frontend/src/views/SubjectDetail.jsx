@@ -89,6 +89,18 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
         setNotice(`Backfill queued: ${reqs} request${reqs === 1 ? "" : "s"} (${types} data type${types === 1 ? "" : "s"} × ${res.windows} window${res.windows === 1 ? "" : "s"}). Garmin is rate-limited, so requests are spaced out and data re-pushes via webhook over the next several minutes — refresh later to see it.`);
       } finally { setBusy(false); }
     });
+  const doReprocess = () =>
+    guard(async () => {
+      setBusy(true);
+      setNotice("");
+      try {
+        const res = await api.reprocess(subject.id);
+        const summary = Object.entries(res.counts || {}).map(([k, v]) => `${k} ${v}`).join(", ");
+        setNotice(`Re-derived from stored data: ${summary || "nothing to reprocess"}.`);
+        await load();
+        await loadDevices();
+      } finally { setBusy(false); }
+    });
 
   const multiDevice = new Set(daily.map((d) => d.provider).filter(Boolean)).size > 1;
   const HEAD = ["Date", ...(multiDevice ? ["Device"] : []), "Steps", "Dist (m)", "Cal", "Floors", "Sleep", "HR avg", "Rest HR", "HRV", "SpO₂", "AZM", "MVPA", "Pts"];
@@ -161,6 +173,16 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
                 onClick={doBackfill}
               >
                 {busy ? "Requesting…" : "Request backfill"}
+              </Button>
+            )}
+            {hasGarmin && (
+              <Button
+                variant="ghost"
+                disabled={busy}
+                title="Re-derive metrics from already-stored Garmin data (no re-fetch) — use after enabling an intraday option"
+                onClick={doReprocess}
+              >
+                {busy ? "…" : "Reprocess stored"}
               </Button>
             )}
             <span className="text-xs text-gray-400">(both required)</span>
