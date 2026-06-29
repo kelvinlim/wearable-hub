@@ -4,6 +4,16 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
+## [0.3.8] — 2026-06-29
+
+### Changed
+
+- **The console remembers your page and selected study across a refresh.** Previously a browser
+  refresh always dropped you back on Studies and reset the study picker. The current view and
+  selected study are now persisted to `localStorage` (same pattern as dark mode); on reload the
+  selected study is validated against the studies you can access (falling back to the first), and a
+  persisted superuser-only "Researchers" page falls back to Studies for non-superusers. Frontend-only.
+
 ## [0.3.7] — 2026-06-29
 
 ### Added

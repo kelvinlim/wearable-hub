@@ -10,9 +10,13 @@ import AboutView from "./views/AboutView";
 
 export default function App() {
   const [me, setMe] = useState(undefined); // undefined=loading, null=logged out
-  const [view, setView] = useState("studies");
+  // Persist the current page + selected study so a refresh stays put (default to Studies).
+  const [view, setView] = useState(() => localStorage.getItem("wh-view") || "studies");
   const [studies, setStudies] = useState([]);
-  const [selectedStudyId, setSelectedStudyId] = useState(null);
+  const [selectedStudyId, setSelectedStudyId] = useState(() => {
+    const v = localStorage.getItem("wh-study");
+    return v ? Number(v) : null;
+  });
   const [error, setError] = useState(null);
   const [dark, setDark] = useState(() => localStorage.getItem("wh-dark") === "1");
 
@@ -20,6 +24,14 @@ export default function App() {
     document.documentElement.classList.toggle("dark", dark);
     localStorage.setItem("wh-dark", dark ? "1" : "0");
   }, [dark]);
+  useEffect(() => { localStorage.setItem("wh-view", view); }, [view]);
+  useEffect(() => {
+    if (selectedStudyId != null) localStorage.setItem("wh-study", String(selectedStudyId));
+  }, [selectedStudyId]);
+  // A persisted "researchers" page is superuser-only — fall back to Studies otherwise.
+  useEffect(() => {
+    if (me && view === "researchers" && !me.is_superuser) setView("studies");
+  }, [me, view]);
 
   const guard = useCallback(async (fn) => {
     try {
@@ -35,7 +47,10 @@ export default function App() {
       guard(async () => {
         const s = await api.listStudies();
         setStudies(s);
-        setSelectedStudyId((prev) => (prev ?? (s[0]?.id ?? null)));
+        // Keep the persisted/selected study if it still exists; else default to the first.
+        setSelectedStudyId((prev) =>
+          (prev != null && s.some((x) => x.id === prev) ? prev : (s[0]?.id ?? null))
+        );
       }),
     [guard]
   );
