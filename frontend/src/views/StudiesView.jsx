@@ -102,8 +102,8 @@ const INTRADAY_OPTS = [
   { key: "ingest_intraday_hr", label: "heart rate (downsampled)" },
   { key: "ingest_intraday_hrv", label: "HRV (raw sleep samples)" },
   { key: "ingest_intraday_spo2", label: "SpO₂ (downsampled, avg + min)" },
-  { key: "ingest_intraday_activity", label: "steps + distance (downsampled sums)" },
-  { key: "ingest_intraday_stress", label: "stress level (downsampled, Garmin)" },
+  { key: "ingest_intraday_activity", label: "steps over time (Fitbit; Garmin epochs)" },
+  { key: "ingest_intraday_stress", label: "stress + body battery (downsampled, Garmin)" },
 ];
 
 function SettingsCard({ study, canAdmin, guard, onChanged }) {

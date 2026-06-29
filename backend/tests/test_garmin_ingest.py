@@ -32,8 +32,13 @@ def db():
         s.close()
 
 
-def _seed(db, *, intraday_hr=False, intraday_stress=False):
-    study = Study(name="S", ingest_intraday_hr=intraday_hr, ingest_intraday_stress=intraday_stress)
+def _seed(db, *, intraday_hr=False, intraday_stress=False, intraday_activity=False):
+    study = Study(
+        name="S",
+        ingest_intraday_hr=intraday_hr,
+        ingest_intraday_stress=intraday_stress,
+        ingest_intraday_activity=intraday_activity,
+    )
     db.add(study)
     db.flush()
     subj = Subject(study_id=study.id, status="registered")
@@ -61,6 +66,8 @@ _DAILIES = {
     "floorsClimbed": 12,
     "restingHeartRateInBeatsPerMinute": 58,
     "averageHeartRateInBeatsPerMinute": 74,
+    "bodyBatteryChargedValue": 40,
+    "bodyBatteryDrainedValue": 30,
 }
 
 _SLEEPS = {
@@ -108,6 +115,21 @@ _STRESS = {
     "maxStressLevel": 80,
     # seconds-from-start -> level; -1 is Garmin's "unable to measure" sentinel (must be dropped)
     "timeOffsetStressLevelValues": {"0": 25, "180": 40, "360": -1, "540": 55},
+    # body battery rides the same push; latest = value at the largest offset (540 -> 60)
+    "timeOffsetBodyBatteryValues": {"0": 50, "180": 55, "540": 60},
+}
+
+_EPOCH = {
+    "userId": "U1",
+    "userAccessToken": "uat",
+    "startTimeInSeconds": 1781762400,
+    "startTimeOffsetInSeconds": -21600,
+    "durationInSeconds": 900,
+    "activityType": "WALKING",
+    "steps": 120,
+    "distanceInMeters": 90.0,
+    "activeKilocalories": 20,
+    "intensity": "ACTIVE",
 }
 
 
@@ -260,6 +282,47 @@ def test_intraday_stress_off_by_default(db):
     )
     assert not pts  # no intraday points without the opt-in
     assert _daily(db, acct).metrics["stress"]["avg"] == 30  # daily summary still lands
+
+
+def test_body_battery_summary_from_dailies_and_stress(db):
+    acct = _seed(db)
+    garmin_ingest.ingest_push(db, "dailies", {"dailies": [_DAILIES]})
+    garmin_ingest.ingest_push(db, "stressDetails", {"stressDetails": [_STRESS]})
+    bb = _daily(db, acct).metrics["body_battery"]
+    assert bb["charged"] == 40 and bb["drained"] == 30  # from dailies (not clobbered)
+    assert bb["min"] == 50 and bb["max"] == 60 and bb["latest"] == 60  # from stress offsets
+
+
+def test_body_battery_intraday_rides_stress_optin(db):
+    acct = _seed(db, intraday_stress=True)
+    garmin_ingest.ingest_push(db, "stressDetails", {"stressDetails": [_STRESS]})
+    bb = list(db.scalars(select(HealthDataPoint).where(
+        HealthDataPoint.provider_account_id == acct.id, HealthDataPoint.datatype == "body_battery")))
+    st = list(db.scalars(select(HealthDataPoint).where(
+        HealthDataPoint.provider_account_id == acct.id, HealthDataPoint.datatype == "stress")))
+    assert bb and st  # both stored under the single stress opt-in
+
+
+def test_epochs_intraday_steps_opt_in(db):
+    acct = _seed(db, intraday_activity=True)
+    garmin_ingest.ingest_push(db, "epochs", {"epochs": [_EPOCH]})
+    pts = list(db.scalars(select(HealthDataPoint).where(
+        HealthDataPoint.provider_account_id == acct.id, HealthDataPoint.datatype == "steps")))
+    assert len(pts) == 1
+    assert pts[0].value == 120
+    # re-push is idempotent
+    garmin_ingest.ingest_push(db, "epochs", {"epochs": [_EPOCH]})
+    pts2 = list(db.scalars(select(HealthDataPoint).where(
+        HealthDataPoint.provider_account_id == acct.id, HealthDataPoint.datatype == "steps")))
+    assert len(pts2) == 1
+
+
+def test_epochs_off_by_default(db):
+    acct = _seed(db)
+    garmin_ingest.ingest_push(db, "epochs", {"epochs": [_EPOCH]})
+    pts = list(db.scalars(select(HealthDataPoint).where(
+        HealthDataPoint.provider_account_id == acct.id, HealthDataPoint.datatype == "steps")))
+    assert not pts
 
 
 def test_unresolved_account_lands_raw_only(db):

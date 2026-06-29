@@ -17,13 +17,15 @@ Garmin shapes (Health API summary endpoints; prior art garminrec/db_code2.py:475
     and intraday HR via `timeOffsetHeartRateSamples` ({seconds-from-start: bpm}).
   - `sleeps`: deep/light/rem/awake DurationInSeconds (+ durationInSeconds total).
   - `hrv` / `hrvSummary`: lastNightAvg (ms).
-  - `stress` / `stressDetails`: avg/max + per-band durations from timeOffsetStressLevelValues.
+  - `stress` / `stressDetails`: avg/max + per-band durations from timeOffsetStressLevelValues; the
+    same push also carries body battery (`timeOffsetBodyBatteryValues`) -> metrics["body_battery"].
+  - `epochs`: ~15-min activity slices -> intraday `steps` points (the only Garmin within-day steps).
   - `pulseox` / `pulseOx`: avg SpO2 % from timeOffsetSpo2Values (-> spo2_avg).
   - `respiration`: avg/min/max breaths/min from timeOffsetEpochToBreaths.
   - `bodyComps`: weight/BMI/body fat/water/muscle/bone.
   - `userMetrics`: VO2max + fitness age.
   - `skinTemp` / `skinTemperature`: overnight skin-temp deviation from baseline (°C, sleep-only).
-  - `epochs` and the rest: landed raw (no daily mapping in v1).
+  - everything else: landed raw (no daily mapping).
 """
 
 import logging
@@ -155,6 +157,19 @@ def _merge_metrics(row: DailyHealth, key: str, value) -> None:
     row.metrics = metrics
 
 
+def _merge_submetric(row: DailyHealth, key: str, updates: dict) -> None:
+    """Merge `updates` into the metrics[key] sub-dict, preserving fields other pushes set.
+
+    Body battery is split across two pushes — `dailies` carries charged/drained, `stressDetails`
+    carries the intraday levels — so each must update its own portion without clobbering the other.
+    """
+    metrics = dict(row.metrics or {})
+    sub = dict(metrics.get(key) or {})
+    sub.update(updates)
+    metrics[key] = sub
+    row.metrics = metrics
+
+
 def _num(v):
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         return None
@@ -199,6 +214,11 @@ def _apply_dailies(db: Session, account: ProviderAccount, d: date, item: dict) -
     row.resting_hr = _num(item.get("restingHeartRateInBeatsPerMinute"))
     row.hr_avg = _num(item.get("averageHeartRateInBeatsPerMinute"))
     _merge_metrics(row, "dailies", item)
+    # Body battery daily charge/drain lives on the dailies summary (intraday levels come via stress).
+    charged = _num(item.get("bodyBatteryChargedValue"))
+    drained = _num(item.get("bodyBatteryDrainedValue"))
+    if charged is not None or drained is not None:
+        _merge_submetric(row, "body_battery", {"charged": charged, "drained": drained})
     row.pulled_at = datetime.utcnow()
 
     study = _study_for(db, account)
@@ -264,11 +284,16 @@ def _apply_stress(db: Session, account: ProviderAccount, d: date, item: dict) ->
         "high_seconds": _num(item.get("highStressDurationInSeconds")),
         "raw": item,
     })
+    # Body battery rides the stress push: intraday levels in `timeOffsetBodyBatteryValues`.
+    bb = _body_battery_summary(item.get("timeOffsetBodyBatteryValues"))
+    if bb:
+        _merge_submetric(row, "body_battery", bb)
     row.pulled_at = datetime.utcnow()
 
     study = _study_for(db, account)
     if study and study.ingest_intraday_stress:
         _store_intraday_stress(db, account, d, item)
+        _store_intraday_body_battery(db, account, d, item)
         row.point_count = _count_points(db, account.id, d)
 
 
@@ -345,65 +370,68 @@ def _apply_skin_temp(db: Session, account: ProviderAccount, d: date, item: dict)
     row.pulled_at = datetime.utcnow()
 
 
-def _store_intraday_hr(db: Session, account: ProviderAccount, d: date, item: dict) -> None:
-    """Write Garmin intraday HR (dailies.timeOffsetHeartRateSamples) as N-min average buckets.
+def _apply_epochs(db: Session, account: ProviderAccount, d: date, item: dict) -> None:
+    """Garmin epoch (~15-min activity slice) -> intraday `steps` point (opt-in `ingest_intraday_activity`).
 
-    Keys are seconds from `startTimeInSeconds`; values are bpm. Bucketed to
-    `hr_downsample_minutes` averages and stored as `heart_rate` points — same shape as the Fitbit
-    intraday-HR path, so the console's HR view works unchanged.
+    Epochs are the only Garmin source of within-day steps — `dailies` carries the day total only. Each
+    epoch is stored as one point spanning its own window (value = steps; distance/intensity/type kept
+    in the payload). Idempotent on the epoch start, so re-pushes self-heal. Daily totals still come
+    from `dailies`. ingest_push processes one epoch item per call.
     """
-    samples = item.get("timeOffsetHeartRateSamples")
+    study = _study_for(db, account)
+    if not (study and study.ingest_intraday_activity):
+        return
+    steps = _num(item.get("steps"))
+    start = item.get("startTimeInSeconds")
+    if steps is None or start is None:
+        return
+    dur = _num(item.get("durationInSeconds")) or 0
+    off = item.get("startTimeOffsetInSeconds") or 0
+    bstart = datetime.fromtimestamp(int(start), tz=timezone.utc).replace(tzinfo=None)
+    bend = datetime.fromtimestamp(int(start) + int(dur), tz=timezone.utc).replace(tzinfo=None)
+    dailywrite.upsert_point(
+        db,
+        account.id,
+        "steps",
+        d,
+        point_key=f"steps|{bstart.isoformat()}",
+        start=bstart,
+        end=bend,
+        tz_off=int(off),
+        value=steps,
+        payload={
+            "steps": steps,
+            "distance_m": _num(item.get("distanceInMeters")),
+            "active_kcal": _num(item.get("activeKilocalories")),
+            "intensity": item.get("intensity"),
+            "activity_type": item.get("activityType"),
+        },
+    )
+    row = _get_or_create_daily(db, account, d)
+    row.point_count = _count_points(db, account.id, d)
+
+
+def _store_intraday_avg(
+    db: Session, account: ProviderAccount, d: date, item: dict,
+    *, source_field: str, datatype: str, bucket_min: int, avg_key: str,
+) -> None:
+    """Bucket a Garmin `timeOffset*` -> value map into N-min averages and upsert as `datatype` points.
+
+    Keys are seconds from `startTimeInSeconds`; Garmin's negative sentinels (-1/-2) are dropped.
+    Shared by intraday HR / stress / body battery — all the same shape, so the console's generic
+    point-series view renders each as an over-time table.
+    """
+    samples = item.get(source_field)
     start = item.get("startTimeInSeconds")
     if not isinstance(samples, dict) or start is None:
         return
-    bucket_min = max(1, get_settings().hr_downsample_minutes or 1)
+    bucket_min = max(1, bucket_min or 1)
     off = item.get("startTimeOffsetInSeconds") or 0
     buckets: dict[int, list[int]] = {}
-    for k, bpm in samples.items():
+    for k, raw in samples.items():
         try:
             sec = int(start) + int(k)
-            val = int(bpm)
-        except (TypeError, ValueError):
-            continue
-        bkt = sec - (sec % (bucket_min * 60))
-        buckets.setdefault(bkt, []).append(val)
-    for bkt_epoch, vals in buckets.items():
-        avg = sum(vals) / len(vals)
-        bstart = datetime.fromtimestamp(bkt_epoch, tz=timezone.utc).replace(tzinfo=None)
-        bend = datetime.fromtimestamp(bkt_epoch + bucket_min * 60, tz=timezone.utc).replace(tzinfo=None)
-        dailywrite.upsert_point(
-            db,
-            account.id,
-            "heart_rate",
-            d,
-            point_key=f"heart_rate|{bstart.isoformat()}",
-            start=bstart,
-            end=bend,
-            tz_off=int(off),
-            value=round(avg, 1),
-            payload={"bpm_avg": round(avg, 1), "samples": len(vals), "bucket_minutes": bucket_min},
-        )
-
-
-def _store_intraday_stress(db: Session, account: ProviderAccount, d: date, item: dict) -> None:
-    """Write Garmin intraday stress (stress push's `timeOffsetStressLevelValues`) as N-min buckets.
-
-    Keys are seconds from `startTimeInSeconds`; values are stress level 0-100 with Garmin's negative
-    sentinels (-1 unable, -2 insufficient) which are dropped. Bucketed to `stress_downsample_minutes`
-    averages and stored as `stress` points — same shape as the intraday-HR path, so the console's
-    generic point-series view renders it as a stress-over-time table.
-    """
-    samples = item.get("timeOffsetStressLevelValues")
-    start = item.get("startTimeInSeconds")
-    if not isinstance(samples, dict) or start is None:
-        return
-    bucket_min = max(1, get_settings().stress_downsample_minutes or 1)
-    off = item.get("startTimeOffsetInSeconds") or 0
-    buckets: dict[int, list[int]] = {}
-    for k, lvl in samples.items():
-        try:
-            sec = int(start) + int(k)
-            val = int(lvl)
+            val = int(raw)
         except (TypeError, ValueError):
             continue
         if val < 0:  # -1 unable to measure, -2 insufficient data
@@ -417,15 +445,66 @@ def _store_intraday_stress(db: Session, account: ProviderAccount, d: date, item:
         dailywrite.upsert_point(
             db,
             account.id,
-            "stress",
+            datatype,
             d,
-            point_key=f"stress|{bstart.isoformat()}",
+            point_key=f"{datatype}|{bstart.isoformat()}",
             start=bstart,
             end=bend,
             tz_off=int(off),
             value=round(avg, 1),
-            payload={"stress_avg": round(avg, 1), "samples": len(vals), "bucket_minutes": bucket_min},
+            payload={avg_key: round(avg, 1), "samples": len(vals), "bucket_minutes": bucket_min},
         )
+
+
+def _store_intraday_hr(db: Session, account: ProviderAccount, d: date, item: dict) -> None:
+    """Intraday HR from `dailies.timeOffsetHeartRateSamples` -> `heart_rate` points."""
+    _store_intraday_avg(
+        db, account, d, item,
+        source_field="timeOffsetHeartRateSamples", datatype="heart_rate",
+        bucket_min=get_settings().hr_downsample_minutes, avg_key="bpm_avg",
+    )
+
+
+def _store_intraday_stress(db: Session, account: ProviderAccount, d: date, item: dict) -> None:
+    """Intraday stress from the stress push's `timeOffsetStressLevelValues` -> `stress` points."""
+    _store_intraday_avg(
+        db, account, d, item,
+        source_field="timeOffsetStressLevelValues", datatype="stress",
+        bucket_min=get_settings().stress_downsample_minutes, avg_key="stress_avg",
+    )
+
+
+def _store_intraday_body_battery(db: Session, account: ProviderAccount, d: date, item: dict) -> None:
+    """Intraday body battery from the stress push's `timeOffsetBodyBatteryValues` -> `body_battery`
+    points (0-100). Rides the same push + opt-in as stress."""
+    _store_intraday_avg(
+        db, account, d, item,
+        source_field="timeOffsetBodyBatteryValues", datatype="body_battery",
+        bucket_min=get_settings().stress_downsample_minutes, avg_key="body_battery_avg",
+    )
+
+
+def _body_battery_summary(values) -> dict | None:
+    """min / max / latest body-battery level (0-100) from a `timeOffset* -> value` map.
+
+    `latest` is the value at the largest time offset (the day's most recent reading).
+    """
+    if not isinstance(values, dict):
+        return None
+    pairs = []
+    for k, v in values.items():
+        n = _num(v)
+        if n is None or n < 0:
+            continue
+        try:
+            pairs.append((int(k), n))
+        except (TypeError, ValueError):
+            continue
+    if not pairs:
+        return None
+    pairs.sort()
+    levels = [v for _, v in pairs]
+    return {"min": min(levels), "max": max(levels), "latest": pairs[-1][1]}
 
 
 def _count_points(db: Session, account_id: int, d: date) -> int:
@@ -458,6 +537,7 @@ _APPLIERS = {
     "userMetrics": _apply_user_metrics,
     "skinTemp": _apply_skin_temp,
     "skinTemperature": _apply_skin_temp,
+    "epochs": _apply_epochs,
 }
 
 
