@@ -4,6 +4,18 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
+## [0.3.5] — 2026-06-28
+
+### Fixed
+
+- **Garmin backfill only requests backfillable summary types.** A live backfill showed `pulseox`
+  (404), `bodyComps` (400), and `skinTemp` (400) are **webhook-only** — Garmin does not support them
+  on the `/backfill/{type}` path (corroborated by the 404/400 codes and Garmin's pipeline docs). They
+  are removed from `garmin_backfill_types`, leaving the types that actually backfill
+  (`dailies,sleeps,stressDetails,hrv,respiration,userMetrics`); their data still arrives live via
+  webhook going forward. Documented Garmin's backfill horizon (~30 days before the user connected),
+  which is why historical depth is shallow.
+
 ## [0.3.4] — 2026-06-28
 
 ### Fixed

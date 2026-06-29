@@ -10,7 +10,7 @@ class Settings(BaseSettings):
 
     # --- App ---
     app_name: str = "Wearable Hub"
-    app_version: str = "0.3.4"  # keep in sync with backend/pyproject.toml + frontend/package.json
+    app_version: str = "0.3.5"  # keep in sync with backend/pyproject.toml + frontend/package.json
     environment: str = "dev"  # dev | prod
 
     # Public URL path prefix the app is served under on the host (e.g. "/wearable" on lnpitask,
@@ -55,11 +55,13 @@ class Settings(BaseSettings):
     garmin_access_token_url: str = "https://connectapi.garmin.com/oauth-service/oauth/access_token"
     # Garmin Health (wellness) REST base — used for the user-id lookup and deregistration.
     garmin_api_base: str = "https://apis.garmin.com/wellness-api/rest"
-    # Backfill (historical re-push) — Garmin caps each request window; experience puts it at 90 days,
-    # so long ranges are chunked. Summary types requested by default (must match a registered/enabled
-    # webhook, else the re-pushed data is dropped). Comma-separated; override per deployment.
+    # Backfill (historical re-push) — Garmin caps each request at 90 days AND only serves ~30 days
+    # before the user connected, so history is shallow. Only these summary types are **backfillable**;
+    # `pulseox`/`bodyComps`/`skinTemp`/`epochs`/`healthSnapshot` are **webhook-only** (Garmin returns
+    # 404/400 on their backfill path), so they're excluded — their data still arrives live going
+    # forward, just not via backfill. Comma-separated; override per deployment.
     garmin_backfill_max_window_days: int = 90
-    garmin_backfill_types: str = "dailies,sleeps,stressDetails,hrv,pulseox,respiration,bodyComps,userMetrics,skinTemp"
+    garmin_backfill_types: str = "dailies,sleeps,stressDetails,hrv,respiration,userMetrics"
     # Garmin throttles backfill hard (a burst gets one request through, then 429s). Space requests
     # out and retry each on 429 (honoring Retry-After). Spacing is seconds between requests; retries
     # are per request. The fan-out runs in the background, so minutes-long pacing is fine.
