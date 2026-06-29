@@ -264,13 +264,19 @@ function DevicesPanel({ devices }) {
 }
 
 function PointsView({ points, daily }) {
-  if (!points.length)
-    return <div className="text-sm text-gray-400">No intraday points (floors &amp; calories are rollup-only).</div>;
   const groups = {};
   for (const p of points) (groups[p.datatype] ||= []).push(p);
   return (
-    <div className="flex flex-wrap gap-4">
-      {Object.entries(groups).map(([dt, list]) =>
+    <div className="space-y-3">
+      <MeasuresSummary metrics={daily?.metrics} hasSleepPoints={!!groups.sleep} />
+      {points.length === 0 ? (
+        <div className="text-sm text-gray-400">
+          No intraday point series for this day (sleep, stress &amp; other daily measures, when present,
+          are summarized above; floors &amp; calories are rollup-only).
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-4">
+          {Object.entries(groups).map(([dt, list]) =>
         dt === "sleep" ? (
           <SleepGroup key="sleep" sessions={list} summary={daily?.metrics?.sleep} />
         ) : (
@@ -293,8 +299,137 @@ function PointsView({ points, daily }) {
             </div>
           </div>
         )
+          )}
+        </div>
       )}
     </div>
+  );
+}
+
+// Daily measures that aren't intraday point series — sleep stages (Garmin), stress, respiration,
+// SpO2, user metrics, skin temp, body composition — rendered from the day's `metrics` JSON so the
+// backfilled/pushed summaries are visible. Sleep is shown here only when there are no intraday sleep
+// points (Garmin); Fitbit's session-level sleep is rendered by SleepGroup instead.
+function garminSleepStages(s) {
+  return { DEEP: s?.deep_minutes, REM: s?.rem_minutes, LIGHT: s?.light_minutes, AWAKE: s?.awake_minutes };
+}
+
+const STRESS_BANDS = [
+  ["rest", "rest_seconds"], ["low", "low_seconds"], ["medium", "medium_seconds"], ["high", "high_seconds"],
+];
+
+function MeasuresSummary({ metrics, hasSleepPoints }) {
+  if (!metrics) return null;
+  const m = metrics;
+  const cards = [];
+
+  if (!hasSleepPoints && m.sleep?.stages) {
+    const st = garminSleepStages(m.sleep.stages);
+    if (STAGE_ORDER.some((k) => st[k])) {
+      const asleep = (m.sleep.stages.deep_minutes || 0) + (m.sleep.stages.light_minutes || 0) + (m.sleep.stages.rem_minutes || 0);
+      cards.push(
+        <MeasureCard key="sleep" title="Sleep" sub={asleep ? `${asleep}m asleep` : null}>
+          <div className="basis-full"><StageChips stages={st} /></div>
+        </MeasureCard>
+      );
+    }
+  }
+
+  const s = m.stress;
+  if (s && (s.avg != null || s.max != null)) {
+    cards.push(
+      <MeasureCard key="stress" title="Stress">
+        <Stat label="avg" value={s.avg} />
+        <Stat label="max" value={s.max} />
+        {STRESS_BANDS.map(([lab, key]) =>
+          s[key] != null ? <Stat key={key} label={lab} value={Math.round(s[key] / 60)} unit="m" /> : null
+        )}
+      </MeasureCard>
+    );
+  }
+
+  const r = m.respiration;
+  if (r && (r.avg != null || r.min != null || r.max != null)) {
+    cards.push(
+      <MeasureCard key="resp" title="Respiration" sub="brpm">
+        <Stat label="avg" value={r.avg} />
+        <Stat label="min" value={r.min} />
+        <Stat label="max" value={r.max} />
+      </MeasureCard>
+    );
+  }
+
+  const o = m.spo2;
+  if (o && (o.avg != null || o.min != null || o.max != null)) {
+    cards.push(
+      <MeasureCard key="spo2" title="SpO₂" sub="%">
+        <Stat label="avg" value={o.avg} />
+        <Stat label="min" value={o.min} />
+        <Stat label="max" value={o.max} />
+      </MeasureCard>
+    );
+  }
+
+  const u = m.user_metrics;
+  if (u && (u.vo2_max != null || u.vo2_max_cycling != null || u.fitness_age != null)) {
+    cards.push(
+      <MeasureCard key="um" title="User metrics">
+        <Stat label="VO₂max" value={u.vo2_max} />
+        <Stat label="VO₂max cyc" value={u.vo2_max_cycling} />
+        <Stat label="fitness age" value={u.fitness_age} />
+      </MeasureCard>
+    );
+  }
+
+  const t = m.skin_temp;
+  if (t && t.deviation_c != null) {
+    cards.push(
+      <MeasureCard key="skin" title="Skin temp" sub="vs baseline">
+        <Stat label="dev" value={t.deviation_c} unit="°C" />
+        <Stat label="min" value={t.min_deviation_c} unit="°C" />
+        <Stat label="max" value={t.max_deviation_c} unit="°C" />
+      </MeasureCard>
+    );
+  }
+
+  const b = m.body_composition;
+  if (b && (b.weight_kg != null || b.bmi != null || b.body_fat_percent != null)) {
+    cards.push(
+      <MeasureCard key="body" title="Body composition">
+        <Stat label="weight" value={b.weight_kg} unit="kg" />
+        <Stat label="BMI" value={b.bmi} />
+        <Stat label="body fat" value={b.body_fat_percent} unit="%" />
+      </MeasureCard>
+    );
+  }
+
+  if (!cards.length) return null;
+  return (
+    <div>
+      <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-gray-400">Daily measures</div>
+      <div className="flex flex-wrap gap-2.5">{cards}</div>
+    </div>
+  );
+}
+
+function MeasureCard({ title, sub, children }) {
+  return (
+    <div className="min-w-[140px] rounded-lg border border-gray-200 bg-white p-2.5 dark:border-neutral-700 dark:bg-neutral-900">
+      <div className="mb-1 text-sm">
+        <span className="font-semibold text-maroon dark:text-gold">{title}</span>
+        {sub && <span className="text-xs text-gray-400"> · {sub}</span>}
+      </div>
+      <div className="flex flex-wrap gap-x-3 gap-y-0.5">{children}</div>
+    </div>
+  );
+}
+
+function Stat({ label, value, unit }) {
+  if (value == null) return null;
+  return (
+    <span className="whitespace-nowrap text-xs text-gray-700 dark:text-neutral-200">
+      <span className="text-gray-400">{label}</span> {fmtNum(value)}{unit || ""}
+    </span>
   );
 }
 

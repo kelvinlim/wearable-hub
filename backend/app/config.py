@@ -10,7 +10,7 @@ class Settings(BaseSettings):
 
     # --- App ---
     app_name: str = "Wearable Hub"
-    app_version: str = "0.3.5"  # keep in sync with backend/pyproject.toml + frontend/package.json
+    app_version: str = "0.3.6"  # keep in sync with backend/pyproject.toml + frontend/package.json
     environment: str = "dev"  # dev | prod
 
     # Public URL path prefix the app is served under on the host (e.g. "/wearable" on lnpitask,
