@@ -32,8 +32,8 @@ def db():
         s.close()
 
 
-def _seed(db, *, intraday_hr=False):
-    study = Study(name="S", ingest_intraday_hr=intraday_hr)
+def _seed(db, *, intraday_hr=False, intraday_stress=False):
+    study = Study(name="S", ingest_intraday_hr=intraday_hr, ingest_intraday_stress=intraday_stress)
     db.add(study)
     db.flush()
     subj = Subject(study_id=study.id, status="registered")
@@ -95,6 +95,19 @@ _SKIN_TEMP = {
     "avgDeviationCelsius": -0.4,
     "minDeviationCelsius": -1.2,
     "maxDeviationCelsius": 0.3,
+}
+
+
+_STRESS = {
+    "userId": "U1",
+    "userAccessToken": "uat",
+    "calendarDate": "2026-06-19",
+    "startTimeInSeconds": 1781762400,
+    "startTimeOffsetInSeconds": -21600,
+    "averageStressLevel": 30,
+    "maxStressLevel": 80,
+    # seconds-from-start -> level; -1 is Garmin's "unable to measure" sentinel (must be dropped)
+    "timeOffsetStressLevelValues": {"0": 25, "180": 40, "360": -1, "540": 55},
 }
 
 
@@ -203,6 +216,50 @@ def test_skin_temp_merge_does_not_clobber_dailies(db):
     row = _daily(db, acct)
     assert row.steps == 8421  # dailies survives
     assert row.metrics["skin_temp"]["deviation_c"] == pytest.approx(-0.4)
+
+
+def test_intraday_stress_opt_in(db):
+    acct = _seed(db, intraday_stress=True)
+    garmin_ingest.ingest_push(db, "stressDetails", {"stressDetails": [_STRESS]})
+    pts = list(
+        db.scalars(
+            select(HealthDataPoint).where(
+                HealthDataPoint.provider_account_id == acct.id,
+                HealthDataPoint.datatype == "stress",
+            )
+        )
+    )
+    assert pts, "expected intraday stress points when opted in"
+    # the -1 sentinel is dropped, so its bucket only carries the valid sample
+    assert all(p.value is not None and p.value >= 0 for p in pts)
+    # daily summary still stored alongside the intraday points
+    assert _daily(db, acct).metrics["stress"]["avg"] == 30
+    # re-push is idempotent at the point level
+    garmin_ingest.ingest_push(db, "stressDetails", {"stressDetails": [_STRESS]})
+    pts2 = list(
+        db.scalars(
+            select(HealthDataPoint).where(
+                HealthDataPoint.provider_account_id == acct.id,
+                HealthDataPoint.datatype == "stress",
+            )
+        )
+    )
+    assert len(pts2) == len(pts)
+
+
+def test_intraday_stress_off_by_default(db):
+    acct = _seed(db)  # no opt-in
+    garmin_ingest.ingest_push(db, "stressDetails", {"stressDetails": [_STRESS]})
+    pts = list(
+        db.scalars(
+            select(HealthDataPoint).where(
+                HealthDataPoint.provider_account_id == acct.id,
+                HealthDataPoint.datatype == "stress",
+            )
+        )
+    )
+    assert not pts  # no intraday points without the opt-in
+    assert _daily(db, acct).metrics["stress"]["avg"] == 30  # daily summary still lands
 
 
 def test_unresolved_account_lands_raw_only(db):

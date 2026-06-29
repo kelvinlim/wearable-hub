@@ -88,6 +88,7 @@ function IntradayFlags({ study }) {
     study.ingest_intraday_hrv && "HRV",
     study.ingest_intraday_spo2 && "SpO₂",
     study.ingest_intraday_activity && "Activity",
+    study.ingest_intraday_stress && "Stress",
   ].filter(Boolean);
   if (!on.length) return <span className="text-gray-300">off</span>;
   return (
@@ -102,6 +103,7 @@ const INTRADAY_OPTS = [
   { key: "ingest_intraday_hrv", label: "HRV (raw sleep samples)" },
   { key: "ingest_intraday_spo2", label: "SpO₂ (downsampled, avg + min)" },
   { key: "ingest_intraday_activity", label: "steps + distance (downsampled sums)" },
+  { key: "ingest_intraday_stress", label: "stress level (downsampled, Garmin)" },
 ];
 
 function SettingsCard({ study, canAdmin, guard, onChanged }) {

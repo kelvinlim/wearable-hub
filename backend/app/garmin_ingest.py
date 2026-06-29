@@ -266,6 +266,11 @@ def _apply_stress(db: Session, account: ProviderAccount, d: date, item: dict) ->
     })
     row.pulled_at = datetime.utcnow()
 
+    study = _study_for(db, account)
+    if study and study.ingest_intraday_stress:
+        _store_intraday_stress(db, account, d, item)
+        row.point_count = _count_points(db, account.id, d)
+
 
 def _apply_pulseox(db: Session, account: ProviderAccount, d: date, item: dict) -> None:
     """Pulse Ox push -> spo2_avg column (typed) + metrics["spo2"] detail."""
@@ -377,6 +382,49 @@ def _store_intraday_hr(db: Session, account: ProviderAccount, d: date, item: dic
             tz_off=int(off),
             value=round(avg, 1),
             payload={"bpm_avg": round(avg, 1), "samples": len(vals), "bucket_minutes": bucket_min},
+        )
+
+
+def _store_intraday_stress(db: Session, account: ProviderAccount, d: date, item: dict) -> None:
+    """Write Garmin intraday stress (stress push's `timeOffsetStressLevelValues`) as N-min buckets.
+
+    Keys are seconds from `startTimeInSeconds`; values are stress level 0-100 with Garmin's negative
+    sentinels (-1 unable, -2 insufficient) which are dropped. Bucketed to `stress_downsample_minutes`
+    averages and stored as `stress` points — same shape as the intraday-HR path, so the console's
+    generic point-series view renders it as a stress-over-time table.
+    """
+    samples = item.get("timeOffsetStressLevelValues")
+    start = item.get("startTimeInSeconds")
+    if not isinstance(samples, dict) or start is None:
+        return
+    bucket_min = max(1, get_settings().stress_downsample_minutes or 1)
+    off = item.get("startTimeOffsetInSeconds") or 0
+    buckets: dict[int, list[int]] = {}
+    for k, lvl in samples.items():
+        try:
+            sec = int(start) + int(k)
+            val = int(lvl)
+        except (TypeError, ValueError):
+            continue
+        if val < 0:  # -1 unable to measure, -2 insufficient data
+            continue
+        bkt = sec - (sec % (bucket_min * 60))
+        buckets.setdefault(bkt, []).append(val)
+    for bkt_epoch, vals in buckets.items():
+        avg = sum(vals) / len(vals)
+        bstart = datetime.fromtimestamp(bkt_epoch, tz=timezone.utc).replace(tzinfo=None)
+        bend = datetime.fromtimestamp(bkt_epoch + bucket_min * 60, tz=timezone.utc).replace(tzinfo=None)
+        dailywrite.upsert_point(
+            db,
+            account.id,
+            "stress",
+            d,
+            point_key=f"stress|{bstart.isoformat()}",
+            start=bstart,
+            end=bend,
+            tz_off=int(off),
+            value=round(avg, 1),
+            payload={"stress_avg": round(avg, 1), "samples": len(vals), "bucket_minutes": bucket_min},
         )
 
 

@@ -150,6 +150,8 @@ def update_study(
         study.ingest_intraday_spo2 = payload.ingest_intraday_spo2
     if payload.ingest_intraday_activity is not None:
         study.ingest_intraday_activity = payload.ingest_intraday_activity
+    if payload.ingest_intraday_stress is not None:
+        study.ingest_intraday_stress = payload.ingest_intraday_stress
     db.commit()
     db.refresh(study)
     return study

@@ -4,6 +4,17 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
+## [0.3.7] — 2026-06-29
+
+### Added
+
+- **Intraday stress over time (Garmin).** New per-study opt-in `ingest_intraday_stress` (migration
+  `0016`) stores the Garmin stress push's `timeOffsetStressLevelValues` into `health_data_points`
+  (datatype `stress`), downsampled to N-minute average buckets (`stress_downsample_minutes`, default
+  5; Garmin's negative sentinels −1/−2 dropped). The console's expanded day detail renders it as a
+  stress-over-time table just like heart rate. The daily avg/max stress stay in
+  `daily_health.metrics.stress` regardless. Toggle on the study's intraday opt-ins (off by default).
+
 ## [0.3.6] — 2026-06-29
 
 ### Added
