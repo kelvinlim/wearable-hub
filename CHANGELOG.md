@@ -4,6 +4,19 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
+## [0.3.6] — 2026-06-29
+
+### Added
+
+- **Expanded day detail now shows a "Daily measures" summary.** Previously the expandable subject
+  day only listed intraday point series (for Garmin, just heart rate), so backfilled/pushed sleep,
+  stress, respiration, SpO2, user metrics, and skin temperature were invisible even though they were
+  stored in `daily_health.metrics`. The detail panel now renders compact cards from that JSON: sleep
+  stages (Garmin; Fitbit keeps its session-level `SleepGroup`), stress (avg/max + per-band minutes),
+  respiration (avg/min/max), SpO2, user metrics (VO₂max, fitness age), skin-temp deviation, and body
+  composition — each shown only when present. Frontend-only; the `/daily` API already returned
+  `metrics`.
+
 ## [0.3.5] — 2026-06-28
 
 ### Fixed
