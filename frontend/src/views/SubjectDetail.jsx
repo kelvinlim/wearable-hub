@@ -348,6 +348,19 @@ function MeasuresSummary({ metrics, hasSleepPoints }) {
     );
   }
 
+  const bb = m.body_battery;
+  if (bb && (bb.latest != null || bb.charged != null || bb.min != null || bb.max != null)) {
+    cards.push(
+      <MeasureCard key="bb" title="Body Battery">
+        <Stat label="latest" value={bb.latest} />
+        <Stat label="min" value={bb.min} />
+        <Stat label="max" value={bb.max} />
+        <Stat label="charged" value={bb.charged} />
+        <Stat label="drained" value={bb.drained} />
+      </MeasureCard>
+    );
+  }
+
   const r = m.respiration;
   if (r && (r.avg != null || r.min != null || r.max != null)) {
     cards.push(

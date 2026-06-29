@@ -4,6 +4,27 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
+## [0.3.9] — 2026-06-29
+
+### Added
+
+- **Body Battery (Garmin).** Garmin already sends body battery inside the stress push
+  (`timeOffsetBodyBatteryValues`) plus daily charge/drain on `dailies`
+  (`bodyBatteryChargedValue`/`bodyBatteryDrainedValue`) — now surfaced. Daily summary
+  `metrics.body_battery` carries `charged`/`drained` (from dailies) + `min`/`max`/`latest` (from the
+  stress offsets), merged without clobbering across the two pushes; shown as a Body Battery card.
+  Intraday body-battery levels are stored as `body_battery` points under the **same opt-in as stress**
+  (`ingest_intraday_stress`), rendered over time like heart rate.
+- **Steps over time (Garmin epochs).** New `_apply_epochs` stores each ~15-min epoch's `steps` as an
+  intraday `steps` point (the only Garmin source of within-day steps; `dailies` carries the day total
+  only), gated by the existing `ingest_intraday_activity` opt-in. Requires the **Epochs** webhook
+  enabled in the Garmin portal. Distance/intensity/activityType kept in the point payload.
+
+### Changed
+
+- Refactored the duplicated intraday HR/stress downsamplers into one `_store_intraday_avg`; study
+  opt-in labels updated (`stress + body battery`, `steps over time`).
+
 ## [0.3.8] — 2026-06-29
 
 ### Changed
