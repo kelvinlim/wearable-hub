@@ -84,8 +84,9 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
       setNotice("");
       try {
         const res = await api.backfill(subject.id, start, end);
-        const n = (res.requests || []).length;
-        setNotice(`Backfill requested (${n} window${n === 1 ? "" : "s"}). Garmin re-pushes historical data via webhook over the next while — refresh later to see it.`);
+        const types = res.types?.length ?? 0;
+        const reqs = res.requests ?? 0;
+        setNotice(`Backfill queued: ${reqs} request${reqs === 1 ? "" : "s"} (${types} data type${types === 1 ? "" : "s"} × ${res.windows} window${res.windows === 1 ? "" : "s"}). Garmin is rate-limited, so requests are spaced out and data re-pushes via webhook over the next several minutes — refresh later to see it.`);
       } finally { setBusy(false); }
     });
 

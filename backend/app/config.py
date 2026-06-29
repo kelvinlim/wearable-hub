@@ -10,7 +10,7 @@ class Settings(BaseSettings):
 
     # --- App ---
     app_name: str = "Wearable Hub"
-    app_version: str = "0.3.3"  # keep in sync with backend/pyproject.toml + frontend/package.json
+    app_version: str = "0.3.4"  # keep in sync with backend/pyproject.toml + frontend/package.json
     environment: str = "dev"  # dev | prod
 
     # Public URL path prefix the app is served under on the host (e.g. "/wearable" on lnpitask,
@@ -60,6 +60,11 @@ class Settings(BaseSettings):
     # webhook, else the re-pushed data is dropped). Comma-separated; override per deployment.
     garmin_backfill_max_window_days: int = 90
     garmin_backfill_types: str = "dailies,sleeps,stressDetails,hrv,pulseox,respiration,bodyComps,userMetrics,skinTemp"
+    # Garmin throttles backfill hard (a burst gets one request through, then 429s). Space requests
+    # out and retry each on 429 (honoring Retry-After). Spacing is seconds between requests; retries
+    # are per request. The fan-out runs in the background, so minutes-long pacing is fine.
+    garmin_backfill_request_spacing_seconds: float = 3.0
+    garmin_backfill_max_retries: int = 5
 
     # --- Researcher auth (Google login + RBAC) ---
     # Reuses GOOGLE_CLIENT_ID/SECRET. The researcher login callback (add this exact URI to the

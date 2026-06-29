@@ -9,7 +9,7 @@ import secrets
 from datetime import date, timedelta
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
@@ -577,23 +577,34 @@ def backfill_subject(
     subject_id: int,
     start: date,
     end: date,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> dict:
     """On-demand Garmin backfill: ask Garmin to re-push historical summaries over [start, end].
 
     Garmin-only — Fitbit/Google backfills via `/consolidate` (a pull); Garmin has no pull, so this
-    fires `/backfill/{type}` requests instead. **Async**: returns the queued requests; the data
-    arrives later via the push webhooks (and must be for an enabled webhook type to land). The range
-    is chunked into <=90-day windows per Garmin's cap. Requires study-admin."""
+    fires `/backfill/{type}` requests instead. **Fully async**: the fan-out is spaced out + retries
+    on Garmin's 429 throttle, so it runs in the **background** and this returns immediately with the
+    queued shape. Data then arrives via the push webhooks (only for enabled webhook types). The
+    range is chunked into <=90-day windows per Garmin's cap. Requires study-admin."""
     if end < start:
         raise HTTPException(status_code=400, detail="end must be >= start")
     if (end - start).days > 730:
         raise HTTPException(status_code=400, detail="range too large (max 2 years)")
     assert_study_admin(db, user, study_id_for_subject(db, subject_id))
     acct = _require_account(db, subject_id, garmin.NAME)
-    requests = garmin_backfill.backfill_account(db, acct, start, end)
-    return {"subject_id": subject_id, "provider_account_id": acct.id, "requests": requests}
+    background_tasks.add_task(garmin_backfill.run_backfill, acct.id, start, end)
+    types = garmin_backfill.configured_types()
+    windows = garmin_backfill.window_count(start, end)
+    return {
+        "subject_id": subject_id,
+        "provider_account_id": acct.id,
+        "queued": True,
+        "types": types,
+        "windows": windows,
+        "requests": len(types) * windows,
+    }
 
 
 @router.post("/consolidate/run-due")

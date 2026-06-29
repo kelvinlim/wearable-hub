@@ -4,6 +4,20 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
+## [0.3.4] — 2026-06-28
+
+### Fixed
+
+- **Garmin backfill no longer trips Garmin's rate limit.** Garmin throttles the backfill endpoint
+  hard — a burst got only the first request through (`dailies`) and `429`'d the rest, so sleep /
+  stress / HRV / SpO2 / respiration / body-comp / user-metrics / skin-temp were never queued.
+  `garmin.request_backfill` now retries each `429` with capped exponential backoff (honoring
+  `Retry-After`), and `garmin_backfill` spaces requests apart
+  (`garmin_backfill_request_spacing_seconds`, default 3s; `garmin_backfill_max_retries`, default 5).
+  Because spacing + retries make the fan-out take minutes, `POST /admin/subjects/{id}/backfill` now
+  runs the work in the **background** (`run_backfill`) and returns immediately with a queued shape
+  (`{queued, types, windows, requests}`); the console notice reflects the async behavior.
+
 ## [0.3.3] — 2026-06-28
 
 ### Added

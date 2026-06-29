@@ -11,12 +11,14 @@ a backfill for a disabled type is accepted but the re-pushed data is dropped on 
 """
 
 import logging
+import time
 from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.crypto import decrypt
+from app.db import SessionLocal
 from app.models import ProviderAccount
 from app.providers import garmin
 
@@ -44,6 +46,11 @@ def configured_types() -> list[str]:
     return [t.strip() for t in raw.split(",") if t.strip()]
 
 
+def window_count(start: date, end: date) -> int:
+    """How many chunked windows [start, end] splits into (for reporting the queued work)."""
+    return len(list(_windows(start, end, get_settings().garmin_backfill_max_window_days)))
+
+
 def backfill_account(
     db: Session,
     account: ProviderAccount,
@@ -66,9 +73,16 @@ def backfill_account(
         raise ValueError("Garmin account has no stored access token/secret")
     use_types = types if types is not None else configured_types()
     max_days = settings.garmin_backfill_max_window_days
+    spacing = max(0.0, settings.garmin_backfill_request_spacing_seconds)
     results: list[dict] = []
+    first = True
     for summary_type in use_types:
         for cstart, cend in _windows(start, end, max_days):
+            # Space requests apart so we don't trip Garmin's burst throttle (429). request_backfill
+            # also retries any 429 it still hits; spacing just avoids most of them.
+            if not first and spacing:
+                time.sleep(spacing)
+            first = False
             row = {"type": summary_type, "start": cstart.isoformat(), "end": cend.isoformat()}
             try:
                 # End bound is exclusive: midnight of the day after `cend`.
@@ -83,3 +97,28 @@ def backfill_account(
                 row["error"] = str(exc)
             results.append(row)
     return results
+
+
+def run_backfill(account_id: int, start: date, end: date) -> None:
+    """Background entry point: open a fresh session, load the account, fan out the backfill.
+
+    Used by the admin endpoint via `BackgroundTasks` — spacing + 429 retries make the fan-out take
+    minutes, far too long to hold the HTTP request open. Self-contained (own session); logs a
+    summary. Never raises (it runs detached from any request).
+    """
+    db = SessionLocal()
+    try:
+        account = db.get(ProviderAccount, account_id)
+        if account is None:
+            log.warning("Garmin backfill: account %s no longer exists", account_id)
+            return
+        results = backfill_account(db, account, start, end)
+        accepted = sum(1 for r in results if "status" in r)
+        log.info(
+            "Garmin backfill account %s done: %d/%d requests accepted (%s..%s)",
+            account_id, accepted, len(results), start, end,
+        )
+    except Exception:  # noqa: BLE001 — detached task must not propagate
+        log.exception("Garmin backfill run failed for account %s", account_id)
+    finally:
+        db.close()
