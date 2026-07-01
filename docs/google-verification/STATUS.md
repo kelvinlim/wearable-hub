@@ -31,11 +31,12 @@ conflict on whether a *restricted*-scope app can run **unverified in production*
   historically restricted scopes had **no unverified click-through** (a non-test user is blocked
   until verified). Under this reading, production for restricted data **requires** verification.
 
-**Resolve this before planning anything else — cheap empirical test:**
-1. On `fitbitdata-499001`, set publishing status to **In production** *without* submitting for
-   verification; have a **non-test-user** Google account attempt the health-scope consent at
-   `/enroll`. Completes (with "unverified app" warning) → ≤100 path is real. Blocked / forced to
-   verify → restricted scopes require full verification for any production use.
+**Resolve this before planning anything else — cheap empirical test**
+(click-by-click: [08-production-unverified-test.md](08-production-unverified-test.md)):
+1. On a throwaway project (or `fitbitdata-499001`), set publishing status to **In production**
+   *without* submitting for verification; have a **non-test-user** Google account attempt the
+   health-scope consent at `/enroll`. Completes (with "unverified app" warning) → ≤100 path is real.
+   Blocked / forced to verify → restricted scopes require full verification for any production use.
 2. Confirm in writing with Google (Health API support / OAuth verification).
 
 **If the ≤100 path holds:** use **Production + unverified**, not *Testing* — in Testing,
