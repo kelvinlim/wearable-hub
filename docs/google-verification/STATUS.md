@@ -19,40 +19,30 @@ study there may be a much cheaper path — settle this **before** spending time/
 There is **no** academic-researcher waiver ([Google Health app-verification](https://developers.google.com/health/app-verification)
 confirms none); the 100-user allowance below is the real lever.
 
-**The ≤100-user allowance — ⚠️ UNRESOLVED for restricted scopes; confirm first.** The 100-user
-cap is **per GCP project** (counts over the project's lifetime, non-resettable). Two Google docs
-conflict on whether a *restricted*-scope app can run **unverified in production** under that cap:
-- **Health-API [Setup](https://developers.google.com/health/setup)** says clients are "unverified …
-  with a cap of 100 users for **both testing and production**," and a third-party security review
-  is required only for "**more than 100 users**" → implies ≤100 needs no CASA and can be in
-  production unverified.
-- **General [Verification requirements](https://support.google.com/cloud/answer/13464321)** lists
-  restricted-scope obligations (app review, demo video, annual CASA) with **no ≤100 carve-out**, and
-  historically restricted scopes had **no unverified click-through** (a non-test user is blocked
-  until verified). Under this reading, production for restricted data **requires** verification.
+**The ≤100-user allowance — ✅ CONFIRMED for restricted scopes (tested 2026-06-30).** The 100-user
+cap is **per GCP project** (counts over the project's lifetime, non-resettable). We ran the
+empirical test on `fitbitdata-499001`: set publishing status to **In production** *without*
+submitting for verification → a **non-test-user** Google account hit the standard "unverified app"
+warnings and **was allowed to enroll in the study**. So a restricted-scope Health app **can run
+unverified in production under the 100-user cap** — no verification, no CASA, no per-subject email
+allowlisting. The Console's own text agrees: cap is "100 … prior to app verification … over the
+entire lifetime of the app," and a third-party review is required only for **>100 users**.
 
-**Resolve this before planning anything else — cheap empirical test**
-(click-by-click: [08-production-unverified-test.md](08-production-unverified-test.md)):
-1. On a throwaway project (or `fitbitdata-499001`), set publishing status to **In production**
-   *without* submitting for verification; have a **non-test-user** Google account attempt the
-   health-scope consent at `/enroll`. Completes (with "unverified app" warning) → ≤100 path is real.
-   Blocked / forced to verify → restricted scopes require full verification for any production use.
-2. Confirm in writing with Google (Health API support / OAuth verification).
-
-**If the ≤100 path holds:** use **Production + unverified**, not *Testing* — in Testing,
-restricted-scope refresh tokens expire after **7 days** (fatal for passive collection); in
-production they don't. Subjects still see an "unverified app" warning; Limited-Use + live privacy
-policy still required (already done).
-**If it does not:** the only options are **Testing mode** (manual email allowlist, 7-day tokens) or
-**full verification + CASA** (Steps 5–9).
+**Use Production + unverified, not Testing** — in Testing, restricted-scope refresh tokens expire
+after 7 days; in production they don't (our subjects' tokens have refreshed fine for weeks in
+Testing, but Production is the supported path). Subjects see an "unverified app" warning; Limited-Use
++ live privacy policy still required (already done). Full verification + CASA (Steps 5–9) apply
+**only if a study group exceeds 100 users**.
 
 **Per-study projects (multiplying the cap).** Because the cap is per project, each discrete study
 can have its **own GCP project + OAuth client + consent screen + subscriber + service account**,
 each with an independent ≤100 allowance. Genuinely separate studies (distinct IRB protocol / PI /
 consent / data governance) are a defensible basis for separate projects. **Caveat:** Google tracks
 **brand identity across projects**, so you cannot clone one app across projects purely to dodge the
->100 threshold — the studies must be truly distinct. Needs app changes (per-study credentials — the
-app currently uses one global credential set; see [README architecture](../../CLAUDE.md)).
+>100 threshold — the studies must be truly distinct. Supported in-app via **shared Google credential
+sets**: a superuser registers each project's credentials once (encrypted in the DB) and assigns
+studies to it; enrollment + retrieval resolve the right project per study, and each subject's token
+is pinned to the project that issued it. Per-project Console setup is one-time (see below).
 
 **Action — get target enrollment N _per study_:**
 - **Every study ≤100** → run unverified-production per study and **skip Steps 6–9 (incl. CASA)**;

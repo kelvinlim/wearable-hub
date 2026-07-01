@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { Plus, Download, Trash2, HeartPulse } from "lucide-react";
+import { Plus, Download, Trash2, HeartPulse, KeyRound } from "lucide-react";
 import { api } from "../api";
 import { Card, Button, Badge, Input, Select, Th, Td, Empty, SectionTitle } from "../ui";
 import { download, studyDailyCsv, studyPointsCsv, ALL_PROVIDERS, providerLabel } from "../lib";
@@ -8,7 +8,12 @@ export default function StudiesView({ studies, selectedStudyId, onStudyChange, r
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
   const [provider, setProvider] = useState("fitbit_gh");
+  const [credSets, setCredSets] = useState([]);
   const selected = studies.find((s) => s.id === selectedStudyId) || null;
+
+  useEffect(() => {
+    if (isSuper) guard(async () => setCredSets(await api.listCredentialSets()));
+  }, [isSuper, guard]);
 
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_1.2fr]">
@@ -71,7 +76,7 @@ export default function StudiesView({ studies, selectedStudyId, onStudyChange, r
 
       {selected ? (
         <div className="space-y-5">
-          <SettingsCard study={selected} canAdmin={canAdmin} guard={guard} onChanged={reloadStudies} />
+          <SettingsCard study={selected} canAdmin={canAdmin} isSuper={isSuper} credSets={credSets} guard={guard} onChanged={reloadStudies} />
           {canAdmin && <MembersCard studyId={selected.id} guard={guard} />}
         </div>
       ) : (
@@ -106,11 +111,21 @@ const INTRADAY_OPTS = [
   { key: "ingest_intraday_stress", label: "stress + body battery (downsampled, Garmin)" },
 ];
 
-function SettingsCard({ study, canAdmin, guard, onChanged }) {
+function SettingsCard({ study, canAdmin, isSuper, credSets = [], guard, onChanged }) {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [fmt, setFmt] = useState("json");
   const [busy, setBusy] = useState(false);
+  const [pi, setPi] = useState(study.pi_name || "");
+  const [irb, setIrb] = useState(study.irb_approval_number || "");
+  useEffect(() => {
+    setPi(study.pi_name || "");
+    setIrb(study.irb_approval_number || "");
+  }, [study.id, study.pi_name, study.irb_approval_number]);
+  const saveField = (field, value, current) => {
+    if ((current || "") !== value)
+      guard(async () => { await api.updateStudy(study.id, { [field]: value }); onChanged(); });
+  };
 
   const runExport = () =>
     guard(async () => {
@@ -150,6 +165,37 @@ function SettingsCard({ study, canAdmin, guard, onChanged }) {
           ))}
           <p className="text-xs text-gray-400">
             Raw HRV/SpO₂ are sleep-period samples; subjects need the matching scopes granted.
+          </p>
+        </div>
+      )}
+
+      {canAdmin && (
+        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <label className="text-sm">
+            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-400">PI name</span>
+            <Input value={pi} onChange={(e) => setPi(e.target.value)} onBlur={() => saveField("pi_name", pi, study.pi_name)} placeholder="Principal investigator" />
+          </label>
+          <label className="text-sm">
+            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-400">IRB approval #</span>
+            <Input value={irb} onChange={(e) => setIrb(e.target.value)} onBlur={() => saveField("irb_approval_number", irb, study.irb_approval_number)} placeholder="e.g. STUDY00026668" />
+          </label>
+        </div>
+      )}
+
+      {isSuper && (
+        <div className="mb-4">
+          <div className="mb-1 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-gray-400">
+            <KeyRound className="h-4 w-4 text-maroon dark:text-gold" /> Google project
+          </div>
+          <Select
+            value={study.credential_set_id ?? ""}
+            onChange={(e) => guard(async () => { await api.setStudyCredentialSet(study.id, e.target.value ? Number(e.target.value) : null); onChanged(); })}
+          >
+            <option value="">Global default (env)</option>
+            {credSets.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </Select>
+          <p className="mt-1 text-xs text-gray-400">
+            Which GCP project this study enrolls under (manage in “Google projects”). Changing it affects new enrollments only.
           </p>
         </div>
       )}

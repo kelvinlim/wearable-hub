@@ -25,6 +25,10 @@ class StudyOut(BaseModel):
     ingest_intraday_spo2: bool = False
     ingest_intraday_activity: bool = False
     ingest_intraday_stress: bool = False
+    pi_name: str | None = None
+    irb_approval_number: str | None = None
+    credential_set_id: int | None = None
+    credential_set_name: str | None = None  # populated by the admin handler
     created_at: datetime | None
 
 
@@ -34,6 +38,54 @@ class StudyUpdate(BaseModel):
     ingest_intraday_spo2: bool | None = None
     ingest_intraday_activity: bool | None = None
     ingest_intraday_stress: bool | None = None
+    pi_name: str | None = None
+    irb_approval_number: str | None = None
+
+
+# --- Admin: Google credential sets (superuser only) -----------------------------
+
+class CredentialSetIn(BaseModel):
+    """Create/update payload. Omitted or blank secret fields are left unchanged on update."""
+
+    name: str | None = None
+    oauth_client_id: str | None = None
+    oauth_client_secret: str | None = None  # write-only
+    health_scopes: str | None = None
+    gh_project_id: str | None = None
+    gh_project_number: str | None = None
+    gh_subscriber_id: str | None = None
+    gh_subscription_create_policy: str | None = None
+    gh_subscription_data_types: str | None = None
+    sa_json: str | None = None  # write-only (raw service-account JSON)
+    webhook_secret: str | None = None  # write-only
+    console_url: str | None = None
+
+
+class CredentialSetOut(BaseModel):
+    """Never returns secret values — only booleans indicating whether each is configured."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    oauth_client_id: str | None = None
+    health_scopes: str | None = None
+    gh_project_id: str | None = None
+    gh_project_number: str | None = None
+    gh_subscriber_id: str | None = None
+    gh_subscription_create_policy: str | None = None
+    gh_subscription_data_types: str | None = None
+    console_url: str | None = None
+    has_client_secret: bool = False
+    has_sa_json: bool = False
+    has_webhook_secret: bool = False
+    study_count: int = 0
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class StudyCredentialSetAssign(BaseModel):
+    credential_set_id: int | None = None  # null -> revert to global env creds
 
 
 # --- Admin: subjects ------------------------------------------------------------

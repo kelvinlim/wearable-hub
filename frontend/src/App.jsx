@@ -6,6 +6,7 @@ import LoginView from "./views/LoginView";
 import StudiesView from "./views/StudiesView";
 import SubjectsView from "./views/SubjectsView";
 import ResearchersView from "./views/ResearchersView";
+import CredentialSetsView from "./views/CredentialSetsView";
 import AboutView from "./views/AboutView";
 
 export default function App() {
@@ -28,9 +29,9 @@ export default function App() {
   useEffect(() => {
     if (selectedStudyId != null) localStorage.setItem("wh-study", String(selectedStudyId));
   }, [selectedStudyId]);
-  // A persisted "researchers" page is superuser-only — fall back to Studies otherwise.
+  // Persisted superuser-only pages fall back to Studies for non-superusers.
   useEffect(() => {
-    if (me && view === "researchers" && !me.is_superuser) setView("studies");
+    if (me && !me.is_superuser && (view === "researchers" || view === "projects")) setView("studies");
   }, [me, view]);
 
   const guard = useCallback(async (fn) => {
@@ -102,6 +103,7 @@ export default function App() {
         />
       )}
       {view === "researchers" && me.is_superuser && <ResearchersView guard={guard} />}
+      {view === "projects" && me.is_superuser && <CredentialSetsView guard={guard} />}
       {view === "about" && <AboutView me={me} />}
 
       {error && (

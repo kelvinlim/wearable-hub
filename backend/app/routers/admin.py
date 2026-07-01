@@ -5,21 +5,24 @@ anything; other researchers are scoped to studies they're a member of ('admin' m
 study's subjects + members, 'member' is read-only). Project-level ops are superuser-only.
 """
 
+import json
 import secrets
 from datetime import date, timedelta
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app import consolidation, garmin_backfill, garmin_ingest
 from app.accounts import revoke_account
 from app.config import get_settings
+from app.crypto import encrypt
 from app.db import get_db
 from app.models import (
     ConsolidationState,
     DailyHealth,
+    GoogleCredentialSet,
     HealthData,
     HealthDataPoint,
     PairedDevice,
@@ -33,11 +36,14 @@ from app.models import (
 )
 from app.providers import fitbit_gh, garmin
 from app.schemas import (
+    CredentialSetIn,
+    CredentialSetOut,
     MemberCreate,
     MemberOut,
     RegistrationCreate,
     RegistrationOut,
     StudyCreate,
+    StudyCredentialSetAssign,
     StudyOut,
     StudyUpdate,
     SubjectCreate,
@@ -152,6 +158,159 @@ def update_study(
         study.ingest_intraday_activity = payload.ingest_intraday_activity
     if payload.ingest_intraday_stress is not None:
         study.ingest_intraday_stress = payload.ingest_intraday_stress
+    if payload.pi_name is not None:
+        study.pi_name = payload.pi_name
+    if payload.irb_approval_number is not None:
+        study.irb_approval_number = payload.irb_approval_number
+    db.commit()
+    db.refresh(study)
+    return study
+
+
+# --- Google credential sets (superuser only) ------------------------------------
+# Each set = one GCP project's credentials. Secrets are Fernet-encrypted and NEVER returned; the
+# output only reports whether each is configured. See app/providers/gh_creds.py for resolution.
+
+_CREDSET_PLAIN = (
+    "oauth_client_id", "health_scopes", "gh_project_id", "gh_project_number", "gh_subscriber_id",
+    "gh_subscription_create_policy", "gh_subscription_data_types", "console_url",
+)
+
+
+def _credset_out(db: Session, cs: GoogleCredentialSet) -> CredentialSetOut:
+    n = db.scalar(
+        select(func.count()).select_from(Study).where(Study.credential_set_id == cs.id)
+    ) or 0
+    return CredentialSetOut(
+        id=cs.id, name=cs.name,
+        oauth_client_id=cs.oauth_client_id, health_scopes=cs.health_scopes,
+        gh_project_id=cs.gh_project_id, gh_project_number=cs.gh_project_number,
+        gh_subscriber_id=cs.gh_subscriber_id,
+        gh_subscription_create_policy=cs.gh_subscription_create_policy,
+        gh_subscription_data_types=cs.gh_subscription_data_types, console_url=cs.console_url,
+        has_client_secret=bool(cs.oauth_client_secret), has_sa_json=bool(cs.sa_json),
+        has_webhook_secret=bool(cs.webhook_secret), study_count=n,
+        created_at=cs.created_at, updated_at=cs.updated_at,
+    )
+
+
+def _apply_credset(cs: GoogleCredentialSet, p: CredentialSetIn) -> None:
+    """Apply a payload. Non-secret fields set (blank clears); secrets set only when non-blank
+    (blank/omitted keeps the stored value) — so edits don't require re-entering secrets."""
+    if p.name is not None:
+        cs.name = p.name
+    for f in _CREDSET_PLAIN:
+        v = getattr(p, f)
+        if v is not None:
+            setattr(cs, f, v or None)
+    if p.oauth_client_secret:
+        cs.oauth_client_secret = encrypt(p.oauth_client_secret)
+    if p.webhook_secret:
+        cs.webhook_secret = encrypt(p.webhook_secret)
+    if p.sa_json:
+        try:
+            json.loads(p.sa_json)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="sa_json is not valid JSON") from exc
+        cs.sa_json = encrypt(p.sa_json)
+
+
+def _credset_name_conflict(db: Session, name: str, exclude_id: int | None = None) -> bool:
+    q = select(GoogleCredentialSet).where(GoogleCredentialSet.name == name)
+    if exclude_id is not None:
+        q = q.where(GoogleCredentialSet.id != exclude_id)
+    return db.scalar(q) is not None
+
+
+@router.get("/credential-sets", response_model=list[CredentialSetOut])
+def list_credential_sets(
+    db: Session = Depends(get_db), _: User = Depends(require_superuser)
+) -> list[CredentialSetOut]:
+    sets = db.scalars(select(GoogleCredentialSet).order_by(GoogleCredentialSet.name))
+    return [_credset_out(db, cs) for cs in sets]
+
+
+@router.post("/credential-sets", response_model=CredentialSetOut, status_code=201)
+def create_credential_set(
+    payload: CredentialSetIn, db: Session = Depends(get_db), _: User = Depends(require_superuser)
+) -> CredentialSetOut:
+    if not payload.name:
+        raise HTTPException(status_code=400, detail="name is required")
+    if _credset_name_conflict(db, payload.name):
+        raise HTTPException(status_code=409, detail="A credential set with that name already exists")
+    cs = GoogleCredentialSet(name=payload.name)
+    _apply_credset(cs, payload)
+    db.add(cs)
+    db.commit()
+    db.refresh(cs)
+    return _credset_out(db, cs)
+
+
+@router.get("/credential-sets/{set_id}", response_model=CredentialSetOut)
+def get_credential_set(
+    set_id: int, db: Session = Depends(get_db), _: User = Depends(require_superuser)
+) -> CredentialSetOut:
+    cs = db.get(GoogleCredentialSet, set_id)
+    if cs is None:
+        raise HTTPException(status_code=404, detail="Credential set not found")
+    return _credset_out(db, cs)
+
+
+@router.put("/credential-sets/{set_id}", response_model=CredentialSetOut)
+def update_credential_set(
+    set_id: int, payload: CredentialSetIn, db: Session = Depends(get_db),
+    _: User = Depends(require_superuser),
+) -> CredentialSetOut:
+    cs = db.get(GoogleCredentialSet, set_id)
+    if cs is None:
+        raise HTTPException(status_code=404, detail="Credential set not found")
+    if payload.name and payload.name != cs.name and _credset_name_conflict(db, payload.name, set_id):
+        raise HTTPException(status_code=409, detail="A credential set with that name already exists")
+    _apply_credset(cs, payload)
+    db.commit()
+    db.refresh(cs)
+    return _credset_out(db, cs)
+
+
+@router.delete("/credential-sets/{set_id}", status_code=204)
+def delete_credential_set(
+    set_id: int, db: Session = Depends(get_db), _: User = Depends(require_superuser)
+) -> Response:
+    cs = db.get(GoogleCredentialSet, set_id)
+    if cs is None:
+        raise HTTPException(status_code=404, detail="Credential set not found")
+    n_studies = db.scalar(
+        select(func.count()).select_from(Study).where(Study.credential_set_id == set_id)
+    ) or 0
+    if n_studies:
+        raise HTTPException(status_code=409, detail=f"In use by {n_studies} study(ies); reassign first")
+    n_accts = db.scalar(
+        select(func.count()).select_from(ProviderAccount)
+        .where(ProviderAccount.credential_set_id == set_id)
+    ) or 0
+    if n_accts:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Pinned by {n_accts} enrolled account(s) (their tokens were issued by it); cannot delete",
+        )
+    db.delete(cs)
+    db.commit()
+    return Response(status_code=204)
+
+
+@router.put("/studies/{study_id}/credential-set", response_model=StudyOut)
+def assign_study_credential_set(
+    study_id: int, payload: StudyCredentialSetAssign, db: Session = Depends(get_db),
+    _: User = Depends(require_superuser),
+) -> Study:
+    """Point a study at a credential set (or null → global). Affects NEW enrollments only; existing
+    accounts keep the set that issued their token."""
+    study = db.get(Study, study_id)
+    if study is None:
+        raise HTTPException(status_code=404, detail="Study not found")
+    if payload.credential_set_id is not None and db.get(GoogleCredentialSet, payload.credential_set_id) is None:
+        raise HTTPException(status_code=404, detail="Credential set not found")
+    study.credential_set_id = payload.credential_set_id
     db.commit()
     db.refresh(study)
     return study
@@ -806,11 +965,14 @@ def _subject_export_payload(
     accounts = list(
         db.scalars(select(ProviderAccount).where(ProviderAccount.subject_id == subj.id))
     )
+    study = db.get(Study, subj.study_id)
     subject = {
         "id": subj.id,
         "subject_label": subj.subject_label,
         "participant_id": subj.participant_id,
         "study_id": subj.study_id,
+        "pi_name": study.pi_name if study else None,
+        "irb_approval_number": study.irb_approval_number if study else None,
         "status": subj.status,
         "registrations": [
             {
@@ -891,7 +1053,13 @@ def export_study(
     for subj in db.scalars(select(Subject).where(Subject.study_id == study_id).order_by(Subject.id)):
         subjects_out.append(_subject_export_payload(db, subj, start, end))
     return {
-        "study": {"id": study.id, "name": study.name, "description": study.description},
+        "study": {
+            "id": study.id,
+            "name": study.name,
+            "description": study.description,
+            "pi_name": study.pi_name,
+            "irb_approval_number": study.irb_approval_number,
+        },
         "range": {
             "start": start.isoformat() if start else None,
             "end": end.isoformat() if end else None,

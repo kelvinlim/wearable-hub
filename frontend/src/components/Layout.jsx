@@ -4,6 +4,7 @@ import {
   BookOpen,
   Users,
   ShieldCheck,
+  KeyRound,
   Info,
   Moon,
   Sun,
@@ -18,6 +19,7 @@ const TITLES = {
   studies: "Studies",
   subjects: "Subjects",
   researchers: "Research staff",
+  projects: "Google projects",
   about: "About",
 };
 
@@ -38,7 +40,12 @@ export default function Layout({
   const nav = [
     { id: "studies", name: "Studies", icon: BookOpen },
     { id: "subjects", name: "Subjects", icon: Users },
-    ...(me?.is_superuser ? [{ id: "researchers", name: "Research staff", icon: ShieldCheck }] : []),
+    ...(me?.is_superuser
+      ? [
+          { id: "researchers", name: "Research staff", icon: ShieldCheck },
+          { id: "projects", name: "Google projects", icon: KeyRound },
+        ]
+      : []),
     { id: "about", name: "About", icon: Info },
   ];
   const showStudyPicker = currentView === "studies" || currentView === "subjects";
