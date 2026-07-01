@@ -4,6 +4,29 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
+## [0.4.0] — 2026-07-01
+
+### Added
+
+- **Per-study Google credentials via shared credential sets.** Each study can run on its **own GCP
+  project** (own 100-user cap) instead of the single global credential set. A superuser registers a
+  named **credential set** (OAuth client id/secret, scopes, project id/number, subscriber id,
+  service-account JSON, webhook secret — secrets Fernet-encrypted in `google_credential_sets`) and
+  assigns studies to it (`studies.credential_set_id`); many studies may share one set. Enrollment
+  resolves the study's set; each `ProviderAccount` **pins the issuing set** so token refresh/revoke
+  always use the client that granted the token (reassigning a study affects only new enrollments).
+  Unassigned studies fall back to the global env creds (existing `Fitbit Demo` unchanged). Superuser
+  "Google projects" console view + per-study picker. Also: per-study **PI name** + **IRB approval
+  number** fields. Migration `0017`.
+
+### Verified against the live Google Health API (2026-06-30)
+
+- **Restricted health scopes run unverified in Production under the 100-user cap.** Publishing
+  `fitbitdata-499001` to production *without* submitting for verification let a **non-test-user**
+  enroll (standard "unverified app" warning, no block). So ≤100 users/project needs **no
+  verification and no CASA**; the third-party review is required only for **>100 users**. The cap is
+  **per GCP project**, over the project's lifetime — hence per-study projects to scale the program.
+
 ## [0.3.10] — 2026-06-29
 
 ### Added

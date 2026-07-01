@@ -24,8 +24,8 @@ from app.branding import page as _page
 from app.config import get_settings
 from app.crypto import encrypt
 from app.db import get_db
-from app.models import ProjectSubscriber, ProviderAccount, Subject
-from app.providers import fitbit_gh, garmin
+from app.models import ProjectSubscriber, ProviderAccount, Study, Subject
+from app.providers import fitbit_gh, garmin, gh_creds
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/enroll", tags=["enroll"])
@@ -106,14 +106,19 @@ def enroll_start(entry_code: str = Form(...), db: Session = Depends(get_db)):
         db.commit()
         return RedirectResponse(url=authorize_url, status_code=303)
 
-    # Default: Fitbit via Google Health (OAuth2 + PKCE).
+    # Default: Fitbit via Google Health (OAuth2 + PKCE). Enroll under the study's credential set
+    # (which GCP project); pin it on the account so refresh/revoke use the issuing client.
+    subject = db.get(Subject, acct.subject_id)
+    study = db.get(Study, subject.study_id) if subject else None
+    creds = gh_creds.resolve_for_study(db, study.id if study else None)
+    acct.credential_set_id = study.credential_set_id if study else None
     code_verifier, code_challenge = fitbit_gh.generate_pkce()
     state = fitbit_gh.generate_state()
     acct.state = state
     acct.code_verifier = code_verifier
     db.commit()
     return RedirectResponse(
-        url=fitbit_gh.build_authorization_url(state, code_challenge), status_code=303
+        url=fitbit_gh.build_authorization_url(creds, state, code_challenge), status_code=303
     )
 
 
@@ -148,7 +153,9 @@ def _fitbit_callback(db: Session, code: str, state: str) -> HTMLResponse:
     if not acct.code_verifier:
         raise HTTPException(status_code=400, detail="No PKCE verifier on record for this state")
 
-    result = fitbit_gh.exchange(code, acct.code_verifier)
+    # Use the set pinned at enroll_start (the client that will issue this token).
+    creds = gh_creds.resolve_for_account(db, acct)
+    result = fitbit_gh.exchange(creds, code, acct.code_verifier)
 
     acct.access_token = encrypt(result.access_token)
     if result.refresh_token:  # Google omits it on re-auth without prompt=consent; keep prior otherwise

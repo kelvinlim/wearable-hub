@@ -59,6 +59,34 @@ class StudyMembership(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class GoogleCredentialSet(Base):
+    """A reusable set of Google credentials = one GCP project. Studies reference one by FK; many
+    studies may share a set (pooling its 100-user cap). Secrets are Fernet ciphertext (app/crypto).
+    Any blank field falls back to the global env `Settings` at resolve time (providers/gh_creds)."""
+
+    __tablename__ = "google_credential_sets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    # Subject-facing OAuth (this project's client).
+    oauth_client_id: Mapped[str | None] = mapped_column(Text)
+    oauth_client_secret: Mapped[str | None] = mapped_column(Text)  # Fernet ciphertext
+    health_scopes: Mapped[str | None] = mapped_column(Text)  # space-separated; blank -> global
+    # Project / subscriber identifiers (subscriber ops arrive with the Phase-2 webhook work).
+    gh_project_id: Mapped[str | None] = mapped_column(String(255))
+    gh_project_number: Mapped[str | None] = mapped_column(String(255))
+    gh_subscriber_id: Mapped[str | None] = mapped_column(String(255))
+    gh_subscription_create_policy: Mapped[str | None] = mapped_column(String(32))
+    gh_subscription_data_types: Mapped[str | None] = mapped_column(Text)
+    sa_json: Mapped[str | None] = mapped_column(Text)  # Fernet ciphertext of the SA key JSON
+    webhook_secret: Mapped[str | None] = mapped_column(Text)  # Fernet ciphertext
+    console_url: Mapped[str | None] = mapped_column(Text)  # informational GCP Console link
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
+
+
 class Study(Base):
     __tablename__ = "studies"
 
@@ -80,12 +108,24 @@ class Study(Base):
     # Opt-in: store intraday stress level (downsampled to N-min avg buckets). Garmin only — from the
     # stress push's `timeOffsetStressLevelValues`; the daily avg/max stay in daily_health.metrics.
     ingest_intraday_stress: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Google credentials this study enrolls under (one GCP project). Null -> global env creds.
+    # Governs NEW enrollments; each account pins its own issuing set (see ProviderAccount).
+    credential_set_id: Mapped[int | None] = mapped_column(ForeignKey("google_credential_sets.id"))
+    # Study record metadata (not secret).
+    pi_name: Mapped[str | None] = mapped_column(String(255))
+    irb_approval_number: Mapped[str | None] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     created_by: Mapped["User | None"] = relationship(back_populates="studies")
     subjects: Mapped[list["Subject"]] = relationship(
         back_populates="study", cascade="all, delete-orphan"
     )
+    credential_set: Mapped["GoogleCredentialSet | None"] = relationship()
+
+    @property
+    def credential_set_name(self) -> str | None:
+        """Convenience for API output (StudyOut); the set's label or None for global."""
+        return self.credential_set.name if self.credential_set else None
 
 
 class Subject(Base):
@@ -150,6 +190,10 @@ class ProviderAccount(Base):
     # payloads). Differs from the OAuth `sub` above; used to link inbound webhook data.
     health_user_id: Mapped[str | None] = mapped_column(String(255), index=True)
     raw_token_json: Mapped[dict | None] = mapped_column(JSON)
+    # The credential set (GCP project OAuth client) that ISSUED this account's token, pinned at
+    # enrollment. Refresh/revoke must use the issuing client — independent of the study's current
+    # set. Null = legacy/global (enrolled under the env creds).
+    credential_set_id: Mapped[int | None] = mapped_column(ForeignKey("google_credential_sets.id"))
 
     registered: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

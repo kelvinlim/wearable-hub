@@ -14,12 +14,16 @@ import hashlib
 import json
 import secrets
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING
 from urllib.parse import urlencode
 
 import httpx
 
 from app.config import get_settings
 from app.providers.base import TokenResult
+
+if TYPE_CHECKING:
+    from app.providers.gh_creds import GHCreds
 
 NAME = "fitbit_gh"
 
@@ -87,13 +91,13 @@ def _to_result(token: dict) -> TokenResult:
 
 # --- OAuth ----------------------------------------------------------------------
 
-def build_authorization_url(state: str, code_challenge: str) -> str:
-    s = get_settings()
+def build_authorization_url(creds: "GHCreds", state: str, code_challenge: str) -> str:
+    """Build the subject OAuth authorize URL for the given (resolved) credential set."""
     params = {
         "response_type": "code",
-        "client_id": s.google_client_id,
-        "redirect_uri": s.oauth_redirect_uri,
-        "scope": s.google_health_scopes,
+        "client_id": creds.client_id,
+        "redirect_uri": creds.redirect_uri,
+        "scope": creds.scopes,
         "code_challenge": code_challenge,
         "code_challenge_method": "S256",
         "state": state,
@@ -104,32 +108,30 @@ def build_authorization_url(state: str, code_challenge: str) -> str:
     return f"{AUTHORIZATION_ENDPOINT}?{urlencode(params)}"
 
 
-def exchange(code: str, code_verifier: str) -> TokenResult:
+def exchange(creds: "GHCreds", code: str, code_verifier: str) -> TokenResult:
     """Exchange an authorization code for tokens (Google token endpoint)."""
-    s = get_settings()
     data = {
         "grant_type": "authorization_code",
         "code": code,
         "code_verifier": code_verifier,
-        "client_id": s.google_client_id,
-        "client_secret": s.google_client_secret,
-        "redirect_uri": s.oauth_redirect_uri,
+        "client_id": creds.client_id,
+        "client_secret": creds.client_secret,
+        "redirect_uri": creds.redirect_uri,
     }
     resp = httpx.post(TOKEN_ENDPOINT, data=data, timeout=_HTTP_TIMEOUT)
     resp.raise_for_status()
     return _to_result(resp.json())
 
 
-def refresh(refresh_token: str) -> TokenResult:
-    """Refresh an access token. Google usually omits a new refresh_token; the
-    caller should keep the existing one when the result's refresh_token is None.
+def refresh(creds: "GHCreds", refresh_token: str) -> TokenResult:
+    """Refresh an access token against the credential set that issued it. Google usually omits a
+    new refresh_token; the caller should keep the existing one when the result's is None.
     """
-    s = get_settings()
     data = {
         "grant_type": "refresh_token",
         "refresh_token": refresh_token,
-        "client_id": s.google_client_id,
-        "client_secret": s.google_client_secret,
+        "client_id": creds.client_id,
+        "client_secret": creds.client_secret,
     }
     resp = httpx.post(TOKEN_ENDPOINT, data=data, timeout=_HTTP_TIMEOUT)
     # A revoked grant fails refresh with 400 invalid_grant — surface it as a typed signal so

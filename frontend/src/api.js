@@ -98,4 +98,18 @@ export const api = {
     }),
   removeMember: (studyId, userId) =>
     req(`/admin/studies/${studyId}/members/${userId}`, { method: "DELETE" }),
+
+  // Google credential sets (superuser only)
+  listCredentialSets: () => req("/admin/credential-sets"),
+  createCredentialSet: (body) =>
+    req("/admin/credential-sets", { method: "POST", body: JSON.stringify(body) }),
+  updateCredentialSet: (setId, body) =>
+    req(`/admin/credential-sets/${setId}`, { method: "PUT", body: JSON.stringify(body) }),
+  deleteCredentialSet: (setId) =>
+    req(`/admin/credential-sets/${setId}`, { method: "DELETE" }),
+  setStudyCredentialSet: (studyId, credentialSetId) =>
+    req(`/admin/studies/${studyId}/credential-set`, {
+      method: "PUT",
+      body: JSON.stringify({ credential_set_id: credentialSetId }),
+    }),
 };

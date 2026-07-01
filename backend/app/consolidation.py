@@ -39,7 +39,7 @@ from app.models import (
     Study,
     Subject,
 )
-from app.providers import fitbit_gh
+from app.providers import fitbit_gh, gh_creds
 
 log = logging.getLogger(__name__)
 _TIMEOUT = 30.0
@@ -420,10 +420,15 @@ def aggregate_sleep(points: list[dict]) -> dict:
 # --- consolidation --------------------------------------------------------------
 
 def _fresh_token(db: Session, account: ProviderAccount) -> str:
-    """Refresh + persist the account's access token. Raises GrantRevokedError if revoked."""
+    """Refresh + persist the account's access token. Raises GrantRevokedError if revoked.
+
+    Refreshes against the credential set that ISSUED this token (pinned on the account), so it works
+    regardless of the study's current set. Runs on every trigger (nightly / webhook / on-demand)."""
     if not account.refresh_token:
         raise fitbit_gh.GrantRevokedError("no refresh token on record")
-    res = fitbit_gh.refresh(decrypt(account.refresh_token))
+    creds = gh_creds.resolve_for_account(db, account)
+    log.debug("refresh acct %s using creds source=%s", account.id, creds.source)
+    res = fitbit_gh.refresh(creds, decrypt(account.refresh_token))
     account.access_token = encrypt(res.access_token)
     if res.refresh_token:
         account.refresh_token = encrypt(res.refresh_token)
