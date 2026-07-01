@@ -6,10 +6,30 @@ import { Card, Button, Badge, Input, Th, Td, Empty, SectionTitle } from "../ui";
 // Superuser-only management of Google credential sets (each = one GCP project). Secrets are
 // write-only: the server never returns them, only whether each is configured.
 
+// Only client id/secret + scopes are used by the current enrollment/retrieval flow. The
+// subscriber/webhook fields (project, subscriber, SA JSON, webhook secret) aren't used yet — they're
+// for the Phase-2 real-time push per project — so they live under an "Advanced" section, and blank
+// ones fall back to the global env creds server-side.
+
+// Defaults prefilled into the "New" form — mirror the global .env (GOOGLE_HEALTH_SCOPES,
+// GH_SUBSCRIPTION_DATA_TYPES, GH_SUBSCRIPTION_CREATE_POLICY). Editing an existing set never uses these.
+const DEFAULT_SCOPES = [
+  "openid",
+  "email",
+  "https://www.googleapis.com/auth/googlehealth.activity_and_fitness.readonly",
+  "https://www.googleapis.com/auth/googlehealth.health_metrics_and_measurements.readonly",
+  "https://www.googleapis.com/auth/googlehealth.sleep.readonly",
+  "https://www.googleapis.com/auth/googlehealth.profile.readonly",
+  "https://www.googleapis.com/auth/googlehealth.settings.readonly",
+].join(" ");
+const DEFAULT_DATA_TYPES = "steps sleep distance calories floors weight height exercise altitude";
+
 const BLANK = {
-  name: "", oauth_client_id: "", oauth_client_secret: "", health_scopes: "",
+  name: "", oauth_client_id: "", oauth_client_secret: "",
+  health_scopes: DEFAULT_SCOPES,
   gh_project_id: "", gh_project_number: "", gh_subscriber_id: "",
-  gh_subscription_create_policy: "", gh_subscription_data_types: "",
+  gh_subscription_create_policy: "AUTOMATIC",
+  gh_subscription_data_types: DEFAULT_DATA_TYPES,
   sa_json: "", webhook_secret: "", console_url: "",
 };
 
@@ -64,6 +84,11 @@ export default function CredentialSetsView({ guard }) {
 
   const set = (k, v) => setEditing((e) => ({ ...e, [k]: v }));
   const has = editing?._has || {};
+  // Auto-expand Advanced when editing a set that already has subscriber/webhook fields set.
+  const advConfigured = !!(
+    has.sa || has.webhook || editing?.gh_project_id || editing?.gh_project_number || editing?.gh_subscriber_id
+  );
+  const needsSecret = editing && !editing.id && editing.oauth_client_id && !editing.oauth_client_secret;
 
   return (
     <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1fr_1.1fr]">
@@ -122,26 +147,40 @@ export default function CredentialSetsView({ guard }) {
             <SectionTitle>{editing.id ? "Edit project" : "New project"}</SectionTitle>
           </div>
           <Field label="Name" value={editing.name} onChange={(e) => set("name", e.target.value)} placeholder="e.g. Sleep Study — Project A" />
-          <Field label="OAuth client ID" value={editing.oauth_client_id} onChange={(e) => set("oauth_client_id", e.target.value)} placeholder="…apps.googleusercontent.com" />
-          <Field label="OAuth client secret" hint={has.secret ? "— configured" : null} type="password" value={editing.oauth_client_secret} onChange={(e) => set("oauth_client_secret", e.target.value)} placeholder={has.secret ? "(unchanged)" : ""} autoComplete="new-password" />
+          <Field label="OAuth client ID *" value={editing.oauth_client_id} onChange={(e) => set("oauth_client_id", e.target.value)} placeholder="…apps.googleusercontent.com" />
+          <Field label="OAuth client secret *" hint={has.secret ? "— configured" : null} type="password" value={editing.oauth_client_secret} onChange={(e) => set("oauth_client_secret", e.target.value)} placeholder={has.secret ? "(unchanged)" : ""} autoComplete="new-password" />
+          {needsSecret && (
+            <p className="-mt-1 text-xs text-amber-600 dark:text-amber-400">
+              Set the client secret too — required for a Web OAuth client. A client ID without its secret would fall back to the global secret.
+            </p>
+          )}
           <Field label="Health scopes" hint="— space-separated; blank = global" value={editing.health_scopes} onChange={(e) => set("health_scopes", e.target.value)} />
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Full project ID" value={editing.gh_project_id} onChange={(e) => set("gh_project_id", e.target.value)} placeholder="fitbitdata-499001" />
-            <Field label="Project number" value={editing.gh_project_number} onChange={(e) => set("gh_project_number", e.target.value)} />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Subscriber ID" value={editing.gh_subscriber_id} onChange={(e) => set("gh_subscriber_id", e.target.value)} />
-            <Field label="Subscription policy" value={editing.gh_subscription_create_policy} onChange={(e) => set("gh_subscription_create_policy", e.target.value)} placeholder="AUTOMATIC" />
-          </div>
-          <Field label="Subscription data types" hint="— space-separated" value={editing.gh_subscription_data_types} onChange={(e) => set("gh_subscription_data_types", e.target.value)} />
-          <label className="block text-sm">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-400">
-              Service-account JSON {has.sa && <em className="normal-case text-gray-400">— configured</em>}
-            </span>
-            <textarea rows={4} value={editing.sa_json} onChange={(e) => set("sa_json", e.target.value)} placeholder={has.sa ? "(unchanged) — paste new JSON to replace" : "{ … }"} className="w-full rounded-lg border border-gray-300 px-2 py-1 font-mono text-xs dark:border-neutral-700 dark:bg-neutral-800" />
-          </label>
-          <Field label="Webhook secret" hint={has.webhook ? "— configured" : null} type="password" value={editing.webhook_secret} onChange={(e) => set("webhook_secret", e.target.value)} placeholder={has.webhook ? "(unchanged)" : ""} autoComplete="new-password" />
           <Field label="GCP Console URL" hint="— informational" value={editing.console_url} onChange={(e) => set("console_url", e.target.value)} placeholder="https://console.cloud.google.com/…" />
+
+          <details key={editing.id ?? "new"} open={advConfigured} className="rounded-lg border border-gray-200 p-3 dark:border-neutral-700">
+            <summary className="cursor-pointer select-none text-xs font-semibold uppercase tracking-wide text-gray-400">
+              Advanced — subscriber &amp; webhook <span className="normal-case text-gray-400">(not used yet; for real-time push)</span>
+            </summary>
+            <div className="mt-3 space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Full project ID" value={editing.gh_project_id} onChange={(e) => set("gh_project_id", e.target.value)} placeholder="fitbitdata-499001" />
+                <Field label="Project number" value={editing.gh_project_number} onChange={(e) => set("gh_project_number", e.target.value)} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Subscriber ID" value={editing.gh_subscriber_id} onChange={(e) => set("gh_subscriber_id", e.target.value)} />
+                <Field label="Subscription policy" value={editing.gh_subscription_create_policy} onChange={(e) => set("gh_subscription_create_policy", e.target.value)} placeholder="AUTOMATIC" />
+              </div>
+              <Field label="Subscription data types" hint="— space-separated" value={editing.gh_subscription_data_types} onChange={(e) => set("gh_subscription_data_types", e.target.value)} />
+              <label className="block text-sm">
+                <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-400">
+                  Service-account JSON {has.sa && <em className="normal-case text-gray-400">— configured</em>}
+                </span>
+                <textarea rows={4} value={editing.sa_json} onChange={(e) => set("sa_json", e.target.value)} placeholder={has.sa ? "(unchanged) — paste new JSON to replace" : "{ … }"} className="w-full rounded-lg border border-gray-300 px-2 py-1 font-mono text-xs dark:border-neutral-700 dark:bg-neutral-800" />
+              </label>
+              <Field label="Webhook secret" hint={has.webhook ? "— configured" : null} type="password" value={editing.webhook_secret} onChange={(e) => set("webhook_secret", e.target.value)} placeholder={has.webhook ? "(unchanged)" : ""} autoComplete="new-password" />
+            </div>
+          </details>
+
           <div className="flex gap-2">
             <Button onClick={save}>{editing.id ? "Save" : "Create"}</Button>
             <Button variant="ghost" onClick={() => setEditing(null)}>Cancel</Button>
