@@ -19,14 +19,31 @@ study there may be a much cheaper path — settle this **before** spending time/
 There is **no** academic-researcher waiver ([Google Health app-verification](https://developers.google.com/health/app-verification)
 confirms none); the 100-user allowance below is the real lever.
 
-**The ≤100-user allowance.** The 100-user cap is **per GCP project** (counts over the project's
-lifetime, non-resettable). Google requires the third-party security review (CASA) only for
-**>100 users**; at ≤100 you can operate **unverified** and skip CASA entirely.
-- Use **Production + unverified**, *not* plain *Testing*: in Testing, restricted-scope refresh
-  tokens expire after **7 days** (fatal for passive collection); once the app is **In Production**
-  refresh tokens don't expire. So: publish to production, stay unverified, keep ≤100 users.
-- Trade-off: subjects see an **"unverified app"** warning on the consent screen; Limited-Use +
-  a live privacy policy are still required (already done).
+**The ≤100-user allowance — ⚠️ UNRESOLVED for restricted scopes; confirm first.** The 100-user
+cap is **per GCP project** (counts over the project's lifetime, non-resettable). Two Google docs
+conflict on whether a *restricted*-scope app can run **unverified in production** under that cap:
+- **Health-API [Setup](https://developers.google.com/health/setup)** says clients are "unverified …
+  with a cap of 100 users for **both testing and production**," and a third-party security review
+  is required only for "**more than 100 users**" → implies ≤100 needs no CASA and can be in
+  production unverified.
+- **General [Verification requirements](https://support.google.com/cloud/answer/13464321)** lists
+  restricted-scope obligations (app review, demo video, annual CASA) with **no ≤100 carve-out**, and
+  historically restricted scopes had **no unverified click-through** (a non-test user is blocked
+  until verified). Under this reading, production for restricted data **requires** verification.
+
+**Resolve this before planning anything else — cheap empirical test:**
+1. On `fitbitdata-499001`, set publishing status to **In production** *without* submitting for
+   verification; have a **non-test-user** Google account attempt the health-scope consent at
+   `/enroll`. Completes (with "unverified app" warning) → ≤100 path is real. Blocked / forced to
+   verify → restricted scopes require full verification for any production use.
+2. Confirm in writing with Google (Health API support / OAuth verification).
+
+**If the ≤100 path holds:** use **Production + unverified**, not *Testing* — in Testing,
+restricted-scope refresh tokens expire after **7 days** (fatal for passive collection); in
+production they don't. Subjects still see an "unverified app" warning; Limited-Use + live privacy
+policy still required (already done).
+**If it does not:** the only options are **Testing mode** (manual email allowlist, 7-day tokens) or
+**full verification + CASA** (Steps 5–9).
 
 **Per-study projects (multiplying the cap).** Because the cap is per project, each discrete study
 can have its **own GCP project + OAuth client + consent screen + subscriber + service account**,
@@ -41,8 +58,9 @@ app currently uses one global credential set; see [README architecture](../../CL
   only Steps 0, 3, 4, and a per-project consent screen apply.
 - **Any study >100** → that project needs full restricted-scope verification **and** CASA (below).
 
-**Per-subject enrollment — no email allowlisting in Production.** In **Testing** mode you must
-manually add each subject's Google email to the project's test-user list — Console-only, see
+**Per-subject enrollment — no email allowlisting in Production** *(only if the ≤100
+unverified-production path above is confirmed).* In **Testing** mode you must manually add each
+subject's Google email to the project's test-user list — Console-only, see
 [07-test-user-management.md](07-test-user-management.md). In **Production + unverified** you do
 **not**: any subject self-authenticates (past the unverified-app warning) up to the 100 cap. The
 app never needs the subject's email — enrollment is by **entry code**: a **study-admin (the PI)**
