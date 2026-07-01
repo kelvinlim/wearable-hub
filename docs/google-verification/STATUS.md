@@ -41,6 +41,17 @@ app currently uses one global credential set; see [README architecture](../../CL
   only Steps 0, 3, 4, and a per-project consent screen apply.
 - **Any study >100** → that project needs full restricted-scope verification **and** CASA (below).
 
+**Per-subject enrollment — no email allowlisting in Production.** In **Testing** mode you must
+manually add each subject's Google email to the project's test-user list — Console-only, see
+[07-test-user-management.md](07-test-user-management.md). In **Production + unverified** you do
+**not**: any subject self-authenticates (past the unverified-app warning) up to the 100 cap. The
+app never needs the subject's email — enrollment is by **entry code**: a **study-admin (the PI)**
+creates the subject + code in the researcher console, the subject enters it at `/enroll` and
+authorizes (linked by `healthUserId`, not email). So each PI's per-subject work is *create subject
++ hand out code*, entirely in-app. Only the **one-time per-study GCP project setup** (consent
+screen, scopes, subscriber, service account, publish-to-production) is a central/admin task — not
+per-subject and not the PI's.
+
 > Confirm the unverified-production + ≤100 behavior directly with Google before committing — the
 > token/consent nuances matter for a longitudinal study.
 
