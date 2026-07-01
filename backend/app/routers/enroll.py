@@ -223,19 +223,20 @@ def _maybe_subscribe(db: Session, acct: ProviderAccount) -> None:
     If it isn't, we skip — enrollment still succeeds; the subscription can be created later.
     Never breaks enrollment (tokens are already stored). Fitbit/Google only.
     """
-    settings = fitbit_gh.get_settings()
+    # Resolve the account's pinned credential set (the project it enrolled under).
+    creds = gh_creds.resolve_for_account(db, acct)
 
     # With AUTOMATIC subscriptionCreatePolicy, Google creates per-user subscriptions on
     # consent — we do nothing here and learn of them via webhooks. Only MANUAL needs a call.
-    if settings.gh_subscription_create_policy.upper() == "AUTOMATIC":
+    if (creds.subscription_policy or "").upper() == "AUTOMATIC":
         log.info(
-            "subscriptionCreatePolicy=AUTOMATIC; Google auto-subscribes provider_account %s",
-            acct.id,
+            "subscriptionCreatePolicy=AUTOMATIC (%s); Google auto-subscribes provider_account %s",
+            creds.source, acct.id,
         )
         return
 
     subscriber = db.scalar(
-        select(ProjectSubscriber).where(ProjectSubscriber.project_id == settings.gh_project_id)
+        select(ProjectSubscriber).where(ProjectSubscriber.project_id == creds.project_id)
     )
     if subscriber is None or not subscriber.subscriber_id:
         log.info(

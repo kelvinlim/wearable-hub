@@ -4,6 +4,27 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
+## [0.5.0] — 2026-07-01
+
+### Added
+
+- **Phase 2 — per-project real-time webhook push.** Google Health Tier-1 **subscriber
+  registration** and webhook validation now work per **credential set** (per GCP project), not just
+  globally, so each project delivers real-time data. Subscriber ops (`register_subscriber`/
+  `get_subscriber`/`list_subscriptions`/`create_subscription`, `project_access_token`) take a
+  resolved `GHCreds` and load the project's **service account from the set's encrypted `sa_json`**
+  (`from_service_account_info`), falling back to the global file/ADC. New superuser endpoints
+  `POST/GET /admin/credential-sets/{id}/subscriber` + a **"Register subscriber"** button in the
+  Google-projects console (requires the set's project number, SA JSON, a unique webhook secret, and
+  data types). `project_subscribers.credential_set_id` (migration `0018`) links each registration
+  to its set.
+- **Match-any-secret webhook routing.** All projects register the **same** webhook URL with their
+  **own** secret; the handler authorizes by trying every known secret (global + each set) and the
+  match **identifies the project** — so no nginx change, no new URL, and the global subscriber is
+  untouched. Account resolution's unlinked-candidate fallback is now **scoped to the matched
+  project** (`credential_set_id`), preventing cross-project mislinks. `_maybe_subscribe` reads the
+  account's set policy (AUTOMATIC stays a no-op — Google auto-subscribes).
+
 ## [0.4.0] — 2026-07-01
 
 ### Added

@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app import consolidation, garmin_backfill, garmin_ingest
 from app.accounts import revoke_account
 from app.config import get_settings
-from app.crypto import encrypt
+from app.crypto import decrypt, encrypt
 from app.db import get_db
 from app.models import (
     ConsolidationState,
@@ -34,7 +34,7 @@ from app.models import (
     Subscription,
     User,
 )
-from app.providers import fitbit_gh, garmin
+from app.providers import fitbit_gh, garmin, gh_creds
 from app.schemas import (
     CredentialSetIn,
     CredentialSetOut,
@@ -448,78 +448,122 @@ def delete_registration(
     db.commit()
 
 
-@router.post("/subscriber", status_code=201)
-def ensure_project_subscriber(
-    db: Session = Depends(get_db), _: User = Depends(require_superuser)
-) -> dict:
-    """Tier-1 (one-time): register the project's webhook subscriber with project credentials.
+# --- Tier-1 subscriber registration (global project + per credential set) -------
 
-    Idempotent at the app level — upserts the `project_subscribers` row. Run once after the
-    service account is configured. Returns Google's raw response (or surfaces its error) so
-    the exact subscriber shape can be confirmed against the live API.
-    """
-    settings = get_settings()
-    raw: dict = {}
-    try:
-        raw = fitbit_gh.register_subscriber()
-    except (fitbit_gh.ProjectCredentialsError, fitbit_gh.InvalidDataTypeError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except httpx.HTTPStatusError as exc:
-        # 409 ALREADY_EXISTS → idempotent no-op: the subscriber is already registered, so
-        # fall through and reconcile our DB row from the canonical resource below.
-        if exc.response.status_code != 409:
-            # Pass Google's status + body straight through for debugging the real API.
-            raise HTTPException(
-                status_code=502,
-                detail={"google_status": exc.response.status_code, "google_body": exc.response.text},
-            ) from exc
-
-    # `raw` may be the subscriber resource OR a long-running Operation (async endpoint
-    # verification). Don't parse it — re-read the canonical subscriber by its known id.
-    resource = fitbit_gh.get_subscriber() or {}
-    subscriber_name = resource.get("name")  # full path: projects/{num}/subscribers/{id}
-    # Tier-2 create_subscription() interpolates this into the URL after /subscribers/, so it
-    # must be the SHORT client id, not the full resource name.
-    subscriber_id = settings.gh_subscriber_id
-
-    row = db.scalar(
-        select(ProjectSubscriber).where(ProjectSubscriber.project_id == settings.gh_project_id)
-    )
+def _subscriber_dict(row: ProjectSubscriber | None, project_id: str) -> dict:
     if row is None:
-        row = ProjectSubscriber(project_id=settings.gh_project_id)
-        db.add(row)
-    row.subscriber_id = subscriber_id
-    row.subscriber_name = subscriber_name
-    row.webhook_url = settings.webhook_public_url
-    row.raw_json = resource or raw
-    db.commit()
-    db.refresh(row)
-    return {
-        "project_id": row.project_id,
-        "subscriber_id": row.subscriber_id,
-        "subscriber_name": row.subscriber_name,
-        "webhook_url": row.webhook_url,
-    }
-
-
-@router.get("/subscriber")
-def get_project_subscriber(
-    db: Session = Depends(get_db), _: User = Depends(require_superuser)
-) -> dict:
-    """Show the registered project subscriber, if any."""
-    settings = get_settings()
-    row = db.scalar(
-        select(ProjectSubscriber).where(ProjectSubscriber.project_id == settings.gh_project_id)
-    )
-    if row is None:
-        return {"project_id": settings.gh_project_id, "registered": False}
+        return {"project_id": project_id, "registered": False}
     return {
         "project_id": row.project_id,
         "registered": bool(row.subscriber_id),
         "subscriber_id": row.subscriber_id,
         "subscriber_name": row.subscriber_name,
         "webhook_url": row.webhook_url,
+        "credential_set_id": row.credential_set_id,
     }
+
+
+def _register_and_store(db: Session, creds, credential_set_id: int | None) -> ProjectSubscriber:
+    """Register (or reconcile) the subscriber for a resolved credential set, upsert the DB row."""
+    raw: dict = {}
+    try:
+        raw = fitbit_gh.register_subscriber(creds)
+    except (fitbit_gh.ProjectCredentialsError, fitbit_gh.InvalidDataTypeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except httpx.HTTPStatusError as exc:
+        # 409 ALREADY_EXISTS → idempotent: reconcile from the canonical resource below.
+        if exc.response.status_code != 409:
+            raise HTTPException(
+                status_code=502,
+                detail={"google_status": exc.response.status_code, "google_body": exc.response.text},
+            ) from exc
+    resource = fitbit_gh.get_subscriber(creds) or {}
+    row = db.scalar(select(ProjectSubscriber).where(ProjectSubscriber.project_id == creds.project_id))
+    if row is None:
+        row = ProjectSubscriber(project_id=creds.project_id)
+        db.add(row)
+    row.credential_set_id = credential_set_id
+    row.subscriber_id = creds.subscriber_id
+    row.subscriber_name = resource.get("name")  # full path projects/{num}/subscribers/{id}
+    row.webhook_url = get_settings().webhook_public_url
+    row.raw_json = resource or raw
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+def _require_set_subscriber_config(db: Session, cset: GoogleCredentialSet) -> None:
+    """A per-set subscriber needs the set's OWN project id/number, SA JSON, and a webhook secret
+    that is unique (distinct from the global secret and every other set — the webhook handler tells
+    projects apart by which secret matches)."""
+    missing = [
+        label for val, label in (
+            (cset.gh_project_id, "full project ID"),
+            (cset.gh_project_number, "project number"),
+            (cset.sa_json, "service-account JSON"),
+            (cset.webhook_secret, "webhook secret"),
+        ) if not val
+    ]
+    if missing:
+        raise HTTPException(status_code=400, detail=f"Fill these on the credential set first: {', '.join(missing)}.")
+    own = decrypt(cset.webhook_secret)
+    others = [get_settings().webhook_secret]
+    others += [
+        decrypt(o.webhook_secret)
+        for o in db.scalars(select(GoogleCredentialSet).where(GoogleCredentialSet.id != cset.id))
+        if o.webhook_secret
+    ]
+    if own and own in [o for o in others if o]:
+        raise HTTPException(
+            status_code=400,
+            detail="This credential set's webhook secret must be unique (not the global secret or another set's).",
+        )
+
+
+@router.post("/subscriber", status_code=201)
+def ensure_project_subscriber(
+    db: Session = Depends(get_db), _: User = Depends(require_superuser)
+) -> dict:
+    """Tier-1 (one-time): register the GLOBAL project's webhook subscriber. Idempotent upsert."""
+    creds = gh_creds.resolve_set(db, None)  # global env creds
+    row = _register_and_store(db, creds, None)
+    return _subscriber_dict(row, creds.project_id)
+
+
+@router.get("/subscriber")
+def get_project_subscriber(
+    db: Session = Depends(get_db), _: User = Depends(require_superuser)
+) -> dict:
+    """Show the GLOBAL project subscriber, if any."""
+    creds = gh_creds.resolve_set(db, None)
+    row = db.scalar(select(ProjectSubscriber).where(ProjectSubscriber.credential_set_id.is_(None)))
+    return _subscriber_dict(row, creds.project_id)
+
+
+@router.post("/credential-sets/{set_id}/subscriber", status_code=201)
+def register_set_subscriber(
+    set_id: int, db: Session = Depends(get_db), _: User = Depends(require_superuser)
+) -> dict:
+    """Register the Tier-1 webhook subscriber for one credential set's GCP project."""
+    cset = db.get(GoogleCredentialSet, set_id)
+    if cset is None:
+        raise HTTPException(status_code=404, detail="Credential set not found")
+    _require_set_subscriber_config(db, cset)
+    creds = gh_creds.resolve_set(db, set_id)
+    row = _register_and_store(db, creds, set_id)
+    return _subscriber_dict(row, creds.project_id)
+
+
+@router.get("/credential-sets/{set_id}/subscriber")
+def get_set_subscriber(
+    set_id: int, db: Session = Depends(get_db), _: User = Depends(require_superuser)
+) -> dict:
+    """Show the subscriber registered for one credential set, if any."""
+    cset = db.get(GoogleCredentialSet, set_id)
+    if cset is None:
+        raise HTTPException(status_code=404, detail="Credential set not found")
+    row = db.scalar(select(ProjectSubscriber).where(ProjectSubscriber.credential_set_id == set_id))
+    return _subscriber_dict(row, cset.gh_project_id or "")
 
 
 @router.post("/subscriptions/sync")
@@ -550,8 +594,9 @@ def sync_subscriptions(
         raise HTTPException(
             status_code=400, detail="No project subscriber registered; POST /admin/subscriber first."
         )
+    creds = gh_creds.resolve_set(db, sub_row.credential_set_id)
     try:
-        google_subs = fitbit_gh.list_subscriptions(sub_row.subscriber_id)
+        google_subs = fitbit_gh.list_subscriptions(creds, sub_row.subscriber_id)
     except httpx.HTTPStatusError as exc:
         raise HTTPException(
             status_code=502,
