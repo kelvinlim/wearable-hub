@@ -10,6 +10,42 @@ as you go.
 - **Last reviewed:** 2026-06-30
 - **Legend:** ✅ done · 🔜 next / actionable now · ⏳ blocked on an external party · ⬜ not started
 
+---
+
+## ⚠️ Decision gate — do we even need full verification? (read first)
+
+Full production verification **+ CASA is only forced by crossing 100 users.** For a bounded IRB
+study there may be a much cheaper path — settle this **before** spending time/money on Steps 5–9.
+There is **no** academic-researcher waiver ([Google Health app-verification](https://developers.google.com/health/app-verification)
+confirms none); the 100-user allowance below is the real lever.
+
+**The ≤100-user allowance.** The 100-user cap is **per GCP project** (counts over the project's
+lifetime, non-resettable). Google requires the third-party security review (CASA) only for
+**>100 users**; at ≤100 you can operate **unverified** and skip CASA entirely.
+- Use **Production + unverified**, *not* plain *Testing*: in Testing, restricted-scope refresh
+  tokens expire after **7 days** (fatal for passive collection); once the app is **In Production**
+  refresh tokens don't expire. So: publish to production, stay unverified, keep ≤100 users.
+- Trade-off: subjects see an **"unverified app"** warning on the consent screen; Limited-Use +
+  a live privacy policy are still required (already done).
+
+**Per-study projects (multiplying the cap).** Because the cap is per project, each discrete study
+can have its **own GCP project + OAuth client + consent screen + subscriber + service account**,
+each with an independent ≤100 allowance. Genuinely separate studies (distinct IRB protocol / PI /
+consent / data governance) are a defensible basis for separate projects. **Caveat:** Google tracks
+**brand identity across projects**, so you cannot clone one app across projects purely to dodge the
+>100 threshold — the studies must be truly distinct. Needs app changes (per-study credentials — the
+app currently uses one global credential set; see [README architecture](../../CLAUDE.md)).
+
+**Action — get target enrollment N _per study_:**
+- **Every study ≤100** → run unverified-production per study and **skip Steps 6–9 (incl. CASA)**;
+  only Steps 0, 3, 4, and a per-project consent screen apply.
+- **Any study >100** → that project needs full restricted-scope verification **and** CASA (below).
+
+> Confirm the unverified-production + ≤100 behavior directly with Google before committing — the
+> token/consent nuances matter for a longitudinal study.
+
+---
+
 ## At a glance
 
 Roughly **4 of 10** steps complete. The live-site prerequisites (homepage, privacy, disclosure,
