@@ -7,6 +7,16 @@ import {
   STAGE_ORDER, stageMinutes, providerLabel,
 } from "../lib";
 
+// Pull + consolidate is a synchronous server-side pull; a long range can exceed the gateway
+// timeout, so we send it in windows of this many days each.
+const CHUNK_DAYS = 10;
+// Add `n` days to a "yyyy-mm-dd" string in UTC (avoids local-timezone off-by-one).
+function addDays(iso, n) {
+  const d = new Date(iso + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
 export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
   const [daily, setDaily] = useState([]);
   const [devices, setDevices] = useState([]);
@@ -70,12 +80,31 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
     if (!start || !end) throw new Error("Pick both a start and end date.");
     if (end < start) throw new Error("End date must be on or after the start date.");
   };
+  // Chunk the range into ≤CHUNK_DAYS windows so each consolidate call stays well under the gateway
+  // (nginx proxy_read_timeout). A long full-range pull otherwise 504s even though it succeeds.
   const doConsolidate = () =>
     guard(async () => {
       datesValid();
       setBusy(true);
-      try { await api.consolidate(subject.id, start, end); await load(); await loadDevices(); }
-      finally { setBusy(false); }
+      setNotice("");
+      try {
+        const windows = [];
+        let a = start;
+        while (a <= end) {
+          let b = addDays(a, CHUNK_DAYS - 1);
+          if (b > end) b = end;
+          windows.push([a, b]);
+          a = addDays(b, 1);
+        }
+        for (let i = 0; i < windows.length; i++) {
+          const [a2, b2] = windows[i];
+          if (windows.length > 1) setNotice(`Pulling ${a2}…${b2} (${i + 1}/${windows.length})`);
+          await api.consolidate(subject.id, a2, b2);
+          await load(); // rows appear as each window lands; a later failure keeps earlier ones
+        }
+        setNotice(windows.length > 1 ? `Done — pulled ${windows.length} windows.` : "");
+        await loadDevices();
+      } finally { setBusy(false); }
     });
   const doBackfill = () =>
     guard(async () => {

@@ -4,6 +4,17 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
+## [0.5.1] — 2026-07-01
+
+### Fixed
+
+- **"Gateway Time-out" on long Pull + consolidate.** The synchronous backfill of a multi-month
+  range could exceed the nginx `proxy_read_timeout` (300s) and return a 504 even though the pull
+  succeeded server-side. The console now sends the range in ≤10-day windows sequentially
+  (`SubjectDetail.doConsolidate`), so each request stays well under the gateway timeout, days appear
+  incrementally, and a failed window keeps the earlier ones. No backend change (the endpoint is
+  idempotent per day).
+
 ## [0.5.0] — 2026-07-01
 
 ### Added
