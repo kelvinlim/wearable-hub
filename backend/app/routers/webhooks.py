@@ -28,27 +28,38 @@ from sqlalchemy.orm import Session
 from app import consolidation, garmin_ingest
 from app.accounts import mark_revoked
 from app.config import get_settings
+from app.crypto import decrypt
 from app.db import get_db
-from app.models import HealthData, ProviderAccount
+from app.models import GoogleCredentialSet, HealthData, ProviderAccount
 from app.providers import fitbit_gh
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 
-def _authorized(request: Request) -> bool:
-    """True if the inbound Authorization header matches our registered secret.
+def _authorized(request: Request, db: Session) -> tuple[bool, int | None]:
+    """Match the inbound Authorization header against every known webhook secret — the global one
+    and each credential set's. Returns (authorized, matched_credential_set_id | None); the matching
+    secret identifies which GCP project the notification came from (None = global). A miss → not
+    authorized (the caller 401s, which also satisfies Google's registration-time unauthorized
+    probe). Constant-time compares to avoid leaking secrets via timing.
 
-    If WEBHOOK_SECRET is unset (dev), accept everything — but then the registration
-    handshake's unauthorized probe can't be satisfied, so a real subscriber needs the
-    secret set. Constant-time compare to avoid leaking the secret via timing.
+    If no global secret is set (dev) and no set matches, accept as global — but then the
+    unauthorized probe can't be satisfied, so a real subscriber needs a secret set.
     """
-    secret = get_settings().webhook_secret
-    if not secret:
-        return True
-    expected = f"Bearer {secret}"
     presented = request.headers.get("authorization", "")
-    return hmac.compare_digest(presented, expected)
+    gsecret = get_settings().webhook_secret
+    if gsecret and hmac.compare_digest(presented, f"Bearer {gsecret}"):
+        return True, None
+    for cs in db.scalars(
+        select(GoogleCredentialSet).where(GoogleCredentialSet.webhook_secret.isnot(None))
+    ):
+        sec = decrypt(cs.webhook_secret)
+        if sec and hmac.compare_digest(presented, f"Bearer {sec}"):
+            return True, cs.id
+    if not gsecret:  # dev: no global secret configured -> accept as the global project
+        return True, None
+    return False, None
 
 
 def _parse_dt(value) -> datetime | None:
@@ -84,11 +95,12 @@ def _interval_start(data: dict) -> datetime | None:
     return None
 
 
-def _resolve_account(db: Session, hid: str) -> "ProviderAccount | None":
+def _resolve_account(db: Session, hid: str, set_id: int | None = None) -> "ProviderAccount | None":
     """Find the provider_account for a healthUserId, linking it on first sighting.
 
-    Direct match on `health_user_id`; else the conservative fallback — if exactly one
-    registered account still lacks a healthUserId, this notification is theirs, so bind it.
+    Direct match on `health_user_id`; else the conservative fallback — scoped to the project the
+    notification came from (`set_id`): if exactly one registered account pinned to that credential
+    set still lacks a healthUserId, this notification is theirs, so bind it.
     """
     acct = db.scalar(
         select(ProviderAccount).where(
@@ -104,6 +116,7 @@ def _resolve_account(db: Session, hid: str) -> "ProviderAccount | None":
                 ProviderAccount.provider == fitbit_gh.NAME,
                 ProviderAccount.registered.is_(True),
                 ProviderAccount.health_user_id.is_(None),
+                ProviderAccount.credential_set_id == set_id,  # set_id None → global-pinned accounts
             )
         )
     )
@@ -123,8 +136,10 @@ async def google_health(
     """
     raw = await request.body()
 
-    # Auth gate first — also satisfies the registration-time unauthorized probe.
-    if not _authorized(request):
+    # Auth gate first — also satisfies the registration-time unauthorized probe. The matching
+    # secret tells us which project (credential set) this came from, scoping account resolution.
+    authorized, set_id = _authorized(request, db)
+    if not authorized:
         return Response(status_code=401)
 
     try:
@@ -188,7 +203,7 @@ async def google_health(
             if hid:
                 hid = str(hid)
                 if hid not in acct_cache:
-                    acct = _resolve_account(db, hid)
+                    acct = _resolve_account(db, hid, set_id)
                     acct_cache[hid] = acct.id if acct else None
                 acct_id = acct_cache[hid]
             db.add(

@@ -179,11 +179,11 @@ SUBSCRIBABLE_DATA_TYPES = frozenset(
 )
 
 
-def project_access_token() -> str:
-    """Mint an access token from the service account (or ADC) for project-level calls.
+def project_access_token(creds: "GHCreds") -> str:
+    """Mint an access token for project-level calls from the credential set's service account.
 
-    Uses GH_SA_CREDENTIALS_FILE if set, else Application Default Credentials. Raises
-    ProjectCredentialsError with a clear message when nothing is configured.
+    Uses `creds.sa_json` (the set's SA) if present; else the global GH_SA_CREDENTIALS_FILE; else
+    Application Default Credentials. Raises ProjectCredentialsError when nothing is configured.
     """
     s = get_settings()
     scopes = s.gh_sa_scopes.split()
@@ -193,20 +193,24 @@ def project_access_token() -> str:
         from google.auth.exceptions import DefaultCredentialsError
         from google.oauth2 import service_account
 
-        if s.gh_sa_credentials_file:
-            creds = service_account.Credentials.from_service_account_file(
+        if creds.sa_json:
+            sa_creds = service_account.Credentials.from_service_account_info(
+                creds.sa_json, scopes=scopes
+            )
+        elif s.gh_sa_credentials_file:
+            sa_creds = service_account.Credentials.from_service_account_file(
                 s.gh_sa_credentials_file, scopes=scopes
             )
         else:
             try:
-                creds, _ = google.auth.default(scopes=scopes)
+                sa_creds, _ = google.auth.default(scopes=scopes)
             except DefaultCredentialsError as exc:
                 raise ProjectCredentialsError(
-                    "No project credentials: set GH_SA_CREDENTIALS_FILE to a mounted "
-                    "service-account key, or provide Application Default Credentials."
+                    "No project credentials: add a service-account JSON to the credential set, "
+                    "set GH_SA_CREDENTIALS_FILE, or provide Application Default Credentials."
                 ) from exc
-        creds.refresh(google.auth.transport.requests.Request())
-        return creds.token
+        sa_creds.refresh(google.auth.transport.requests.Request())
+        return sa_creds.token
     except ProjectCredentialsError:
         raise
     except FileNotFoundError as exc:
@@ -215,8 +219,8 @@ def project_access_token() -> str:
         ) from exc
 
 
-def register_subscriber() -> dict:
-    """Tier-1: register the project's webhook subscriber. Project credentials. Idempotent.
+def register_subscriber(creds: "GHCreds") -> dict:
+    """Tier-1: register the credential set's project webhook subscriber. Idempotent.
 
     Per https://developers.google.com/health/webhooks:
       POST /v4/projects/{project-NUMBER}/subscribers?subscriberId={id}
@@ -230,12 +234,11 @@ def register_subscriber() -> dict:
     an authorized probe (must 200) and an unauthorized probe (must 401/403). Our webhook
     must already be publicly reachable and WEBHOOK_SECRET set, or registration fails.
     """
-    s = get_settings()
-    if not s.gh_project_number:
-        raise ProjectCredentialsError("GH_PROJECT_NUMBER is not set (subscriber API needs it).")
+    if not creds.project_number:
+        raise ProjectCredentialsError("project number is not set (subscriber API needs it).")
 
-    config: dict = {"subscriptionCreatePolicy": s.gh_subscription_create_policy}
-    data_types = s.gh_subscription_data_types.split()
+    config: dict = {"subscriptionCreatePolicy": creds.subscription_policy}
+    data_types = creds.subscription_data_types.split()
     invalid = [d for d in data_types if d not in SUBSCRIBABLE_DATA_TYPES]
     if invalid:
         raise InvalidDataTypeError(
@@ -247,23 +250,23 @@ def register_subscriber() -> dict:
         config["dataTypes"] = data_types
 
     body = {
-        "endpointUri": s.webhook_public_url,
+        "endpointUri": get_settings().webhook_public_url,  # shared across projects (match-any-secret)
         "subscriberConfigs": [config],
-        "endpointAuthorization": {"secret": f"Bearer {s.webhook_secret}"},
+        "endpointAuthorization": {"secret": f"Bearer {creds.webhook_secret}"},
     }
-    url = f"{HEALTH_API_BASE}/projects/{s.gh_project_number}/subscribers"
+    url = f"{HEALTH_API_BASE}/projects/{creds.project_number}/subscribers"
     resp = httpx.post(
         url,
-        params={"subscriberId": s.gh_subscriber_id},
+        params={"subscriberId": creds.subscriber_id},
         json=body,
-        headers={"Authorization": f"Bearer {project_access_token()}"},
+        headers={"Authorization": f"Bearer {project_access_token(creds)}"},
         timeout=_HTTP_TIMEOUT,
     )
     resp.raise_for_status()
     return resp.json()
 
 
-def get_subscriber() -> dict | None:
+def get_subscriber(creds: "GHCreds") -> dict | None:
     """Return the canonical project subscriber resource for our configured id, or None.
 
     Used after register_subscriber() to get the authoritative resource: create can return
@@ -273,31 +276,29 @@ def get_subscriber() -> dict | None:
     The API exposes LIST but no GET-by-id route (a GET on .../subscribers/{id} returns a
     Google HTML 404), so we LIST and match on the resource name's trailing id.
     """
-    s = get_settings()
-    url = f"{HEALTH_API_BASE}/projects/{s.gh_project_number}/subscribers"
+    url = f"{HEALTH_API_BASE}/projects/{creds.project_number}/subscribers"
     resp = httpx.get(
         url,
-        headers={"Authorization": f"Bearer {project_access_token()}"},
+        headers={"Authorization": f"Bearer {project_access_token(creds)}"},
         timeout=_HTTP_TIMEOUT,
     )
     resp.raise_for_status()
-    suffix = f"/subscribers/{s.gh_subscriber_id}"
+    suffix = f"/subscribers/{creds.subscriber_id}"
     for sub in resp.json().get("subscribers", []):
         if str(sub.get("name", "")).endswith(suffix):
             return sub
     return None
 
 
-def list_subscriptions(subscriber_id: str) -> list[dict]:
+def list_subscriptions(creds: "GHCreds", subscriber_id: str) -> list[dict]:
     """List per-user subscriptions under the subscriber (project credentials). Verified shape.
 
     Each Subscription has `name`, `user` (= "users/{healthUserId}") and `dataTypes`. Useful
     after an AUTOMATIC enrollment to discover a subject's healthUserId from the `user` field.
     """
-    s = get_settings()
-    url = f"{HEALTH_API_BASE}/projects/{s.gh_project_number}/subscribers/{subscriber_id}/subscriptions"
+    url = f"{HEALTH_API_BASE}/projects/{creds.project_number}/subscribers/{subscriber_id}/subscriptions"
     resp = httpx.get(
-        url, headers={"Authorization": f"Bearer {project_access_token()}"}, timeout=_HTTP_TIMEOUT
+        url, headers={"Authorization": f"Bearer {project_access_token(creds)}"}, timeout=_HTTP_TIMEOUT
     )
     resp.raise_for_status()
     return resp.json().get("subscriptions", [])
@@ -310,7 +311,7 @@ def parse_health_user_id(subscription: dict) -> str | None:
 
 
 def create_subscription(
-    subscriber_id: str, health_user_id: str, data_types: list[str] | None = None
+    creds: "GHCreds", subscriber_id: str, health_user_id: str, data_types: list[str] | None = None
 ) -> dict:
     """Tier-2 (MANUAL policy only): create a per-user subscription. Returns the raw resource.
 
@@ -327,15 +328,14 @@ def create_subscription(
         data types. Under **AUTOMATIC** (current config) Google creates subscriptions itself
         on user consent and this call is unnecessary (and rejected).
     """
-    s = get_settings()
-    url = f"{HEALTH_API_BASE}/projects/{s.gh_project_number}/subscribers/{subscriber_id}/subscriptions"
+    url = f"{HEALTH_API_BASE}/projects/{creds.project_number}/subscribers/{subscriber_id}/subscriptions"
     body: dict = {"user": f"users/{health_user_id}"}
     if data_types:
         body["dataTypes"] = data_types
     resp = httpx.post(
         url,
         json=body,
-        headers={"Authorization": f"Bearer {project_access_token()}"},
+        headers={"Authorization": f"Bearer {project_access_token(creds)}"},
         timeout=_HTTP_TIMEOUT,
     )
     resp.raise_for_status()

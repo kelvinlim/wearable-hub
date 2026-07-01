@@ -112,4 +112,7 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ credential_set_id: credentialSetId }),
     }),
+  getSetSubscriber: (setId) => req(`/admin/credential-sets/${setId}/subscriber`),
+  registerSetSubscriber: (setId) =>
+    req(`/admin/credential-sets/${setId}/subscriber`, { method: "POST" }),
 };

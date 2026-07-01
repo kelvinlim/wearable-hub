@@ -218,6 +218,8 @@ class ProjectSubscriber(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    # The credential set (GCP project) this subscriber belongs to. Null = the global env project.
+    credential_set_id: Mapped[int | None] = mapped_column(ForeignKey("google_credential_sets.id"))
     subscriber_id: Mapped[str | None] = mapped_column(String(255))
     subscriber_name: Mapped[str | None] = mapped_column(String(512))  # full resource name
     webhook_url: Mapped[str | None] = mapped_column(Text)

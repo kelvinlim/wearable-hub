@@ -49,9 +49,23 @@ function Field({ label, hint, value, onChange, ...props }) {
 export default function CredentialSetsView({ guard }) {
   const [sets, setSets] = useState([]);
   const [editing, setEditing] = useState(null); // null | {id?, ...form, _has}
+  const [sub, setSub] = useState(null); // subscriber status for the set being edited
 
   const reload = () => guard(async () => setSets(await api.listCredentialSets()));
   useEffect(() => { reload(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load the subscriber status whenever an existing set is opened.
+  useEffect(() => {
+    setSub(null);
+    if (editing?.id) guard(async () => setSub(await api.getSetSubscriber(editing.id)));
+  }, [editing?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const registerSubscriber = () =>
+    guard(async () => {
+      const s = await api.registerSetSubscriber(editing.id);
+      setSub(s);
+      reload();
+    });
 
   const startEdit = (c) =>
     setEditing({
@@ -180,6 +194,25 @@ export default function CredentialSetsView({ guard }) {
               <Field label="Webhook secret" hint={has.webhook ? "— configured" : null} type="password" value={editing.webhook_secret} onChange={(e) => set("webhook_secret", e.target.value)} placeholder={has.webhook ? "(unchanged)" : ""} autoComplete="new-password" />
             </div>
           </details>
+
+          {editing.id && (
+            <div className="rounded-lg border border-gray-200 p-3 dark:border-neutral-700">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Real-time push (Tier-1 subscriber)</span>
+                {sub?.registered
+                  ? <Badge tone="maroon">registered</Badge>
+                  : <span className="text-xs text-gray-400">not registered</span>}
+              </div>
+              {sub?.subscriber_name && <p className="mb-2 break-all text-xs text-gray-400">{sub.subscriber_name}</p>}
+              <Button variant="ghost" onClick={registerSubscriber}>
+                {sub?.registered ? "Re-register subscriber" : "Register subscriber"}
+              </Button>
+              <p className="mt-1 text-xs text-gray-400">
+                Needs the project number, service-account JSON, a unique webhook secret, and subscription data types
+                (Advanced) saved first. Registers this project's webhook with Google so its subjects get real-time push.
+              </p>
+            </div>
+          )}
 
           <div className="flex gap-2">
             <Button onClick={save}>{editing.id ? "Save" : "Create"}</Button>
