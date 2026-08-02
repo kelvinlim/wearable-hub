@@ -132,8 +132,23 @@ Restricted-scope review.
   self-heal). Intraday HR comes from `dailies.timeOffsetHeartRateSamples` (not `epochs`). Webhook
   `POST /webhooks/garmin/{datatype}` (always 200; `deregistrations` → revoke). Shared daily/point
   writers live in `app/dailywrite.py`.
+- **Oura provider (hybrid pull model).** Third provider via plain OAuth2 (`app/providers/oura.py`,
+  confidential client, **no PKCE**). **Refresh tokens are single-use** (rotated every refresh) —
+  `oura_ingest._fresh_token` refreshes only near expiry and **commits the rotated pair
+  immediately**, before any data call; don't copy Google's flush-only refresh-every-pull pattern.
+  Webhooks are **app-level** (one sub per `(data_type, event_type)` pair for the whole app,
+  managed with `x-client-id`/`x-client-secret`; enum has **no heartrate**) and events carry **no
+  values and no date** → `POST /webhooks/oura` (HMAC `x-oura-signature`; GET = challenge echo)
+  marks local today+yesterday dirty and the shared `consolidation_state` drain dispatches by
+  provider to `oura_ingest.consolidate_day`. Docs are keyed by Oura's local `day` field; `hr_avg`
+  is computed from the always-pulled intraday heartrate samples (stored as points only under the
+  `ingest_intraday_hr` opt-in; sleep-period HRV series under `ingest_intraday_hrv`). Bootstrap
+  webhook subs via `POST /admin/oura/webhooks` (idempotent); a scheduler job renews them before
+  `expiration_time`. `OURA_USE_SANDBOX=true` → `/v2/sandbox/usercollection/*` (no ring needed).
+  The enroll callback disambiguates Google-vs-Oura (both send `code`+`state`) by looking up the
+  account by `state` and branching on its provider.
 - **Per-device enrollment.** `entry_code` lives on `provider_accounts` (one per device), not
-  `subjects` — a subject can register both Fitbit and Garmin. Staff create registrations
+  `subjects` — a subject can register any mix of Fitbit, Garmin, and Oura. Staff create registrations
   (`POST /admin/subjects/{id}/registrations`); `/enroll` looks up the code → provider → OAuth, and
   one `/enroll/callback` dispatches Google (`code`+`state`) vs Garmin (`oauth_token`+`oauth_verifier`).
   Migration `0014` moved existing codes onto each subject's fitbit account. For Garmin the

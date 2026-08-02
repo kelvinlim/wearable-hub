@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.crypto import decrypt
 from app.models import ProviderAccount, Subject
-from app.providers import fitbit_gh, garmin
+from app.providers import fitbit_gh, garmin, oura
 
 log = logging.getLogger(__name__)
 
@@ -46,6 +46,10 @@ def revoke_account(db: Session, acct: ProviderAccount) -> bool:
             # Garmin OAuth1a needs both the UAT (access_token) and the token secret (refresh_token).
             if acct.access_token and acct.refresh_token:
                 garmin.deregister(decrypt(acct.access_token), decrypt(acct.refresh_token))
+                token_sent = True
+        elif acct.provider == oura.NAME:
+            if acct.access_token:
+                oura.revoke(decrypt(acct.access_token))
                 token_sent = True
         else:
             token = None

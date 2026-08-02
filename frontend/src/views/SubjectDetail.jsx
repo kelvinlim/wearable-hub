@@ -70,10 +70,10 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
       else download(`${base}-points.csv`, "text/csv", pointsCsv(data));
     });
 
-  // Per-provider data backfill differs: Fitbit/Google is a synchronous server-side *pull*
-  // (consolidate); Garmin has no pull — it re-pushes asynchronously via the backfill API.
+  // Per-provider data backfill differs: Fitbit/Google and Oura are synchronous server-side
+  // *pulls* (consolidate); Garmin has no pull — it re-pushes asynchronously via the backfill API.
   const providers = new Set((subject.registrations || []).map((r) => r.provider));
-  const hasFitbit = providers.has("fitbit_gh");
+  const hasPull = providers.has("fitbit_gh") || providers.has("oura");
   const hasGarmin = providers.has("garmin");
 
   const datesValid = () => {
@@ -185,10 +185,10 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
             <input type="date" value={start} onChange={(e) => setStart(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800" />
             <span className="text-gray-400">→</span>
             <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800" />
-            {hasFitbit && (
+            {hasPull && (
               <Button
                 disabled={busy || !start || !end}
-                title={!start || !end ? "Pick both a start and end date" : "Fitbit/Google: pull + consolidate"}
+                title={!start || !end ? "Pick both a start and end date" : "Fitbit/Oura: pull + consolidate"}
                 onClick={doConsolidate}
               >
                 {busy ? "Pulling…" : "Pull + consolidate"}
@@ -196,7 +196,7 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
             )}
             {hasGarmin && (
               <Button
-                variant={hasFitbit ? "ghost" : undefined}
+                variant={hasPull ? "ghost" : undefined}
                 disabled={busy || !start || !end}
                 title={!start || !end ? "Pick both a start and end date" : "Garmin: request a re-push (async)"}
                 onClick={doBackfill}
@@ -357,11 +357,13 @@ function PointsView({ points, daily }) {
   );
 }
 
-// Daily measures that aren't intraday point series — sleep stages (Garmin), stress, respiration,
-// SpO2, user metrics, skin temp, body composition — rendered from the day's `metrics` JSON so the
-// backfilled/pushed summaries are visible. Sleep is shown here only when there are no intraday sleep
-// points (Garmin); Fitbit's session-level sleep is rendered by SleepGroup instead.
-function garminSleepStages(s) {
+// Daily measures that aren't intraday point series — sleep stages (Garmin/Oura), stress,
+// respiration, SpO2, user metrics, skin temp, body composition — rendered from the day's `metrics`
+// JSON so the backfilled/pushed summaries are visible. Sleep is shown here only when there are no
+// intraday sleep points; Fitbit's session-level sleep is rendered by SleepGroup instead.
+// Garmin stores stages as {deep_minutes,...}; Oura already uses the uppercase {DEEP,...} shape.
+function summarySleepStages(s) {
+  if (s && STAGE_ORDER.some((k) => s[k] != null)) return s;
   return { DEEP: s?.deep_minutes, REM: s?.rem_minutes, LIGHT: s?.light_minutes, AWAKE: s?.awake_minutes };
 }
 
@@ -375,9 +377,9 @@ function MeasuresSummary({ metrics, hasSleepPoints }) {
   const cards = [];
 
   if (!hasSleepPoints && m.sleep?.stages) {
-    const st = garminSleepStages(m.sleep.stages);
+    const st = summarySleepStages(m.sleep.stages);
     if (STAGE_ORDER.some((k) => st[k])) {
-      const asleep = (m.sleep.stages.deep_minutes || 0) + (m.sleep.stages.light_minutes || 0) + (m.sleep.stages.rem_minutes || 0);
+      const asleep = m.sleep.asleep_min ?? ((st.DEEP || 0) + (st.LIGHT || 0) + (st.REM || 0));
       cards.push(
         <MeasureCard key="sleep" title="Sleep" sub={asleep ? `${asleep}m asleep` : null}>
           <div className="basis-full"><StageChips stages={st} /></div>

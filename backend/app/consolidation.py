@@ -999,7 +999,11 @@ def consolidate_due(db: Session, limit: int = 50) -> dict:
             errors += 1
             continue
         try:
-            result = consolidate_day(db, account, row.local_date)
+            if account.provider == "oura":
+                from app import oura_ingest  # local import: oura_ingest imports this module
+                result = oura_ingest.consolidate_day(db, account, row.local_date)
+            else:
+                result = consolidate_day(db, account, row.local_date)
             done += result.status == "done"
             errors += result.status == "error"
         except Exception as exc:  # noqa: BLE001 — one bad day shouldn't stop the drain

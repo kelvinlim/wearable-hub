@@ -6,8 +6,8 @@ export const cn = (...a) => twMerge(clsx(a));
 export const today = () => new Date().toISOString().slice(0, 10);
 
 // Providers a subject can register (one device each). Shared by the console views + exports.
-export const PROVIDER_LABEL = { fitbit_gh: "Fitbit", garmin: "Garmin" };
-export const ALL_PROVIDERS = ["fitbit_gh", "garmin"];
+export const PROVIDER_LABEL = { fitbit_gh: "Fitbit", garmin: "Garmin", oura: "Oura" };
+export const ALL_PROVIDERS = ["fitbit_gh", "garmin", "oura"];
 export const providerLabel = (p) => PROVIDER_LABEL[p] || p || "";
 
 // The entry code of a subject's registration for a given provider (for study exports).

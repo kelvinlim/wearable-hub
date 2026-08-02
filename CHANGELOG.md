@@ -4,6 +4,41 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
+## [0.6.0] — 2026-08-01
+
+### Added
+
+- **Oura Ring — third provider** (`app/providers/oura.py`, `app/oura_ingest.py`). Standard
+  OAuth2 authorization-code flow (confidential client, **no PKCE**) with **single-use rotating
+  refresh tokens** — `oura_ingest._fresh_token` refreshes only near expiry and **commits the
+  rotated pair immediately** (an uncommitted rotation would orphan the grant, unlike Google's
+  reusable refresh tokens). Tokens fit `provider_accounts` natively; **no migration**.
+- **Pull model via the existing consolidation queue.** Oura webhook events carry **no values**
+  (and no date), so `POST /webhooks/oura` lands the raw event, resolves the account by Oura
+  `user_id` (`provider_user_id`, with the single-unlinked fallback), marks account-local
+  **today+yesterday** dirty, and the shared `consolidation_state` drain dispatches per provider
+  (`consolidate_due` → `oura_ingest.consolidate_day`). Nightly safety-net now covers both pull
+  providers. Day docs are fetched from `/v2/usercollection/*` (padded window, filtered on Oura's
+  local `day` field): daily_activity → steps/distance/calories/MVPA; long-form sleep →
+  sleep_minutes, stages (uppercase DEEP/LIGHT/REM/AWAKE, console/CSV-compatible),
+  duration-weighted `hrv_ms` (RMSSD), `resting_hr` (lowest nightly HR); daily_spo2 → `spo2_avg`;
+  **`hr_avg` = mean of the day's intraday heartrate samples** (always pulled; stored as 5-min
+  points only under the study's `ingest_intraday_hr` opt-in); sleep-period HRV series under
+  `ingest_intraday_hrv`; readiness (score + temperature deviation), stress, workouts, sessions,
+  tags → `metrics` JSON.
+- **App-level webhook subscriptions** (Oura has one subscription per `(data_type, event_type)`
+  pair per application, not per user; the enum has **no heartrate**). Superuser
+  `GET/POST/DELETE /admin/oura/webhooks` idempotently creates the configured pairs (Oura fires a
+  GET challenge at the callback synchronously — `{"challenge": ...}` echoed iff
+  `OURA_WEBHOOK_VERIFICATION_TOKEN` matches); events are HMAC-verified (`x-oura-signature`,
+  client secret); a daily scheduler job renews subscriptions nearing `expiration_time`.
+- **Enrollment callback disambiguation.** Oura returns `code`+`state` exactly like Google, so
+  `/enroll/callback` now looks the account up by `state` first and dispatches on the account's
+  provider (Garmin still recognized by its OAuth1a params). Study creation, entry-code
+  registrations, revocation (`oura.revoke`), console provider dropdown/labels, and the
+  Pull + consolidate button all know the new provider. `OURA_USE_SANDBOX=true` routes reads to
+  Oura's sandbox for dev without a ring.
+
 ## [0.5.1] — 2026-07-01
 
 ### Fixed
