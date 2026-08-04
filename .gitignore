@@ -15,6 +15,7 @@ fitbitreg
 garminrec
 garmin_django
 chan_cras
+grid_react
 
 # stray non-project artifacts
 style/
