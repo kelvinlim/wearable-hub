@@ -119,7 +119,7 @@ the enroll page emit prefixed links (privacy stays at root as a Google-verificat
 [deploy/nginx/wearable-hub.conf](deploy/nginx/wearable-hub.conf), and
 [docs/garmin-portal-registration.md](docs/garmin-portal-registration.md) for the full list of
 portal-registration URLs (callback / privacy / brand image / data endpoints + deregistration) and
-their implementation status. See [CHANGELOG.md](CHANGELOG.md)
+their implementation status. See [CHANGELOG.md](frontend/CHANGELOG.md)
 for the feature log + verified API
 findings. Remaining: live Garmin verification once portal webhooks are registered; production
 Restricted-scope review.
