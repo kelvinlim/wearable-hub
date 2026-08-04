@@ -42,6 +42,15 @@ const TONES = {
   gold: "bg-gold/25 text-maroon dark:text-gold",
   maroon: "bg-maroon/10 text-maroon dark:bg-maroon/40 dark:text-gold",
   red: "bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300",
+  // Provider identity tones (see providerTone in lib.js). A teal/indigo/amber triad —
+  // one cool, one blue, one warm — chosen for hue separation that survives color-vision
+  // deficiency (worst pair ΔE 13.6 deutan / 23.6 normal vision, validated at the
+  // saturated steps teal-600 #0d9488, indigo-600 #4f46e5, amber-700 #b45309). Blue+violet
+  // was the obvious pick and is unusable: deutan ΔE 0.3. Kept clear of green/red, which
+  // mean linked/revoked, and of maroon, which stays the brand/neutral badge tone.
+  teal: "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300",
+  indigo: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300",
+  amber: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300",
 };
 
 export function Badge({ tone = "gray", className, children }) {

@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from "react";
 import { Plus, Download, Trash2, HeartPulse, KeyRound } from "lucide-react";
 import { api } from "../api";
 import { Card, Button, Badge, Input, Select, Th, Td, Empty, SectionTitle } from "../ui";
-import { download, studyDailyCsv, studyPointsCsv, ALL_PROVIDERS, providerLabel } from "../lib";
+import { download, studyDailyCsv, studyPointsCsv, ALL_PROVIDERS, providerLabel, providerTone } from "../lib";
 
 export default function StudiesView({ studies, selectedStudyId, onStudyChange, reloadStudies, canAdmin, isSuper, guard }) {
   const [name, setName] = useState("");
@@ -40,7 +40,7 @@ export default function StudiesView({ studies, selectedStudyId, onStudyChange, r
                     <div className="font-medium">{s.name}</div>
                     {s.description && <div className="text-xs text-gray-400">{s.description}</div>}
                   </Td>
-                  <Td><Badge tone="maroon">{providerLabel(s.provider)}</Badge></Td>
+                  <Td><Badge tone={providerTone(s.provider)}>{providerLabel(s.provider)}</Badge></Td>
                   <Td><IntradayFlags study={s} /></Td>
                 </tr>
               ))}
@@ -143,7 +143,7 @@ function SettingsCard({ study, canAdmin, isSuper, credSets = [], guard, onChange
     <Card className="p-4">
       <div className="mb-3 flex items-center gap-2">
         <SectionTitle>{study.name}</SectionTitle>
-        <Badge tone="maroon">{providerLabel(study.provider)}</Badge>
+        <Badge tone={providerTone(study.provider)}>{providerLabel(study.provider)}</Badge>
         <span className="text-xs text-gray-400">device fixed at creation</span>
       </div>
 

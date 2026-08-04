@@ -10,6 +10,12 @@ export const PROVIDER_LABEL = { fitbit_gh: "Fitbit", garmin: "Garmin", oura: "Ou
 export const ALL_PROVIDERS = ["fitbit_gh", "garmin", "oura"];
 export const providerLabel = (p) => PROVIDER_LABEL[p] || p || "";
 
+// Badge tone per provider, so the device column reads by color at a glance. Identity
+// follows the provider, never its position in a list. Unknown providers fall back to the
+// neutral brand tone rather than borrowing another provider's color.
+const PROVIDER_TONE = { fitbit_gh: "teal", garmin: "indigo", oura: "amber" };
+export const providerTone = (p) => PROVIDER_TONE[p] || "maroon";
+
 // The entry code of a subject's registration for a given provider (for study exports).
 export function codeFor(subjectPayload, provider) {
   const regs = (subjectPayload.subject && subjectPayload.subject.registrations) || [];
