@@ -1,8 +1,8 @@
 """Scheduled safety-net: recompute recent days for all registered subjects.
 
 The real-time webhook path is best-effort (a dropped notification or a transient pull failure
-can leave a day stale). This re-marks the last few local days dirty for every registered fitbit
-account and drains the queue, so steady-state data self-heals.
+can leave a day stale). This re-marks the last few local days dirty for every registered pull-provider
+(fitbit/oura) account and drains the queue, so steady-state data self-heals.
 
 Run from cron (no in-repo scheduler), e.g. nightly:
     0 4 * * *  cd /app && python -m app.jobs.nightly
@@ -18,7 +18,7 @@ from sqlalchemy import select
 from app import consolidation
 from app.db import SessionLocal
 from app.models import ProviderAccount
-from app.providers import fitbit_gh
+from app.providers import fitbit_gh, oura
 
 log = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ def run(days_back: int = 2) -> dict:
         accounts = list(
             db.scalars(
                 select(ProviderAccount).where(
-                    ProviderAccount.provider == fitbit_gh.NAME,
+                    ProviderAccount.provider.in_((fitbit_gh.NAME, oura.NAME)),
                     ProviderAccount.registered.is_(True),
                 )
             )

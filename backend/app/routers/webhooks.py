@@ -1,4 +1,4 @@
-"""Webhook receiver for Google Health notifications.
+"""Webhook receivers: Google Health notifications, Garmin pushes, Oura events.
 
 Contract per https://developers.google.com/health/webhooks:
 
@@ -25,13 +25,13 @@ from fastapi import APIRouter, BackgroundTasks, Depends, Request, Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app import consolidation, garmin_ingest
+from app import consolidation, garmin_ingest, oura_ingest
 from app.accounts import mark_revoked
 from app.config import get_settings
 from app.crypto import decrypt
 from app.db import get_db
 from app.models import GoogleCredentialSet, HealthData, ProviderAccount
-from app.providers import fitbit_gh
+from app.providers import fitbit_gh, oura
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
@@ -256,6 +256,111 @@ async def garmin_push(datatype: str, request: Request, db: Session = Depends(get
         garmin_ingest.ingest_push(db, datatype, body)
     except Exception:  # noqa: BLE001 — never let an error reach Garmin
         log.exception("Error processing Garmin %s push; returning 200 regardless", datatype)
+        db.rollback()
+
+    return Response(status_code=200)
+
+
+@router.get("/oura")
+def oura_challenge(verification_token: str | None = None, challenge: str | None = None) -> Response:
+    """Oura's subscription-creation handshake: a GET carrying `verification_token` +
+    `challenge`; we must echo the challenge (JSON) iff the token matches ours."""
+    settings = get_settings()
+    if (
+        not challenge
+        or not settings.oura_webhook_verification_token
+        or not hmac.compare_digest(
+            verification_token or "", settings.oura_webhook_verification_token
+        )
+    ):
+        return Response(status_code=401)
+    return Response(
+        content=json.dumps({"challenge": challenge}), media_type="application/json"
+    )
+
+
+def _resolve_oura_account(db: Session, user_id: str) -> "ProviderAccount | None":
+    """Find the oura provider_account for an event's user_id, linking it on first sighting.
+
+    Direct match on provider_user_id; else the conservative fallback — if exactly one
+    registered oura account still lacks a provider_user_id, the event is theirs, so bind it
+    (mirrors garmin_ingest.resolve_account).
+    """
+    acct = db.scalar(
+        select(ProviderAccount).where(
+            ProviderAccount.provider == oura.NAME,
+            ProviderAccount.provider_user_id == user_id,
+        )
+    )
+    if acct:
+        return acct
+    candidates = list(
+        db.scalars(
+            select(ProviderAccount).where(
+                ProviderAccount.provider == oura.NAME,
+                ProviderAccount.registered.is_(True),
+                ProviderAccount.provider_user_id.is_(None),
+            )
+        )
+    )
+    if len(candidates) == 1:
+        candidates[0].provider_user_id = user_id
+        return candidates[0]
+    return None
+
+
+@router.post("/oura")
+async def oura_event(
+    request: Request, background_tasks: BackgroundTasks, db: Session = Depends(get_db)
+) -> Response:
+    """Receive an Oura webhook event: {event_type, data_type, object_id, event_time, user_id}.
+
+    Events carry NO values, so processing mirrors the Google path: land the raw event, mark
+    the account's local today+yesterday dirty (events carry no date either), drain in the
+    background. Auth is the x-oura-signature HMAC (client secret); a bad signature 401s.
+    Otherwise always 200 — even on internal error — so Oura keeps the subscription alive.
+    """
+    raw = await request.body()
+    if not oura.verify_signature(raw, request.headers.get("x-oura-signature")):
+        return Response(status_code=401)
+
+    try:
+        body = json.loads(raw) if raw else {}
+    except ValueError:
+        body = {"_unparsed": raw.decode("utf-8", "replace")}
+
+    try:
+        items = body if isinstance(body, list) else [body]
+        dirty: dict[int, set] = {}
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            acct = None
+            user_id = item.get("user_id")
+            if user_id:
+                acct = _resolve_oura_account(db, str(user_id))
+            db.add(
+                HealthData(
+                    provider_account_id=acct.id if acct else None,
+                    provider=oura.NAME,
+                    datatype=item.get("data_type"),
+                    start_time=_parse_dt(item.get("event_time")),
+                    payload=item,
+                )
+            )
+            if acct:
+                dirty.setdefault(acct.id, set()).update(
+                    oura_ingest.local_today_yesterday(db, acct)
+                )
+        db.commit()
+
+        for account_id, dates in dirty.items():
+            if dates:
+                consolidation.mark_dirty(db, account_id, dates)
+        if any(dates for dates in dirty.values()):
+            background_tasks.add_task(consolidation.run_due_background)
+    except Exception:  # noqa: BLE001 — never let an error reach the provider
+        log.exception("Error processing Oura webhook; returning 200 regardless")
         db.rollback()
 
     return Response(status_code=200)

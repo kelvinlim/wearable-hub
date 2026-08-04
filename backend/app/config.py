@@ -10,7 +10,7 @@ class Settings(BaseSettings):
 
     # --- App ---
     app_name: str = "Wearable Hub"
-    app_version: str = "0.5.1"  # keep in sync with backend/pyproject.toml + frontend/package.json
+    app_version: str = "0.6.0"  # keep in sync with backend/pyproject.toml + frontend/package.json
     environment: str = "dev"  # dev | prod
 
     # Public URL path prefix the app is served under on the host (e.g. "/wearable" on lnpitask,
@@ -67,6 +67,38 @@ class Settings(BaseSettings):
     # are per request. The fan-out runs in the background, so minutes-long pacing is fine.
     garmin_backfill_request_spacing_seconds: float = 3.0
     garmin_backfill_max_retries: int = 5
+
+    # --- Oura Ring API (OAuth2; third provider, pull model + app-level webhooks) ---
+    # App credentials from cloud.ouraring.com/oauth/applications. Standard confidential
+    # authorization-code flow (no PKCE). Refresh tokens are SINGLE-USE — every refresh
+    # rotates the pair, so the rotated tokens must be committed immediately (see
+    # oura_ingest._fresh_token).
+    oura_client_id: str = ""
+    oura_client_secret: str = ""
+    # Space-delimited. `personal` is required for personal_info (our provider_user_id).
+    oura_scopes: str = "personal daily heartrate spo2 workout session tag"
+    # Subject OAuth callback (must be whitelisted on the Oura application).
+    oura_oauth_redirect_uri: str = "https://lnpitask.umn.edu/wearable/enroll/callback"
+    oura_authorize_url: str = "https://cloud.ouraring.com/oauth/authorize"
+    oura_token_url: str = "https://api.ouraring.com/oauth/token"
+    oura_api_base: str = "https://api.ouraring.com/v2"
+    # Route usercollection reads to /v2/sandbox/... (deterministic sample data, no ring
+    # needed) — for dev/staging only; webhook + OAuth endpoints are unaffected.
+    oura_use_sandbox: bool = False
+    # Webhooks are APP-level: one subscription per (data_type, event_type) pair for the
+    # whole application; events carry no values (we mark the day dirty and pull). The
+    # enum has NO heartrate — intraday HR is pull-only.
+    oura_webhook_public_url: str = "https://lnpitask.umn.edu/wearable/webhooks/oura"
+    # Echoed back by Oura's GET challenge on subscription create; must match to 200.
+    oura_webhook_verification_token: str = ""
+    # Space-delimited subscription targets, created idempotently by POST /admin/oura/webhooks.
+    oura_webhook_data_types: str = (
+        "daily_activity daily_sleep sleep daily_readiness daily_spo2 daily_stress "
+        "workout session tag"
+    )
+    oura_webhook_event_types: str = "create update"
+    # Scheduler renews any subscription whose expiration_time is within N days.
+    oura_webhook_renew_days_before: int = 7
 
     # --- Researcher auth (Google login + RBAC) ---
     # Reuses GOOGLE_CLIENT_ID/SECRET. The researcher login callback (add this exact URI to the

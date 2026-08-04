@@ -14,7 +14,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
-from app import consolidation, garmin_backfill, garmin_ingest
+from app import consolidation, garmin_backfill, garmin_ingest, oura_ingest
 from app.accounts import revoke_account
 from app.config import get_settings
 from app.crypto import decrypt, encrypt
@@ -34,7 +34,7 @@ from app.models import (
     Subscription,
     User,
 )
-from app.providers import fitbit_gh, garmin, gh_creds
+from app.providers import fitbit_gh, garmin, gh_creds, oura
 from app.schemas import (
     CredentialSetIn,
     CredentialSetOut,
@@ -69,7 +69,9 @@ _CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 _CODE_LEN = 6
 
 # Known providers (a device registration's provider must be one of these).
-_PROVIDERS = frozenset({fitbit_gh.NAME, garmin.NAME})
+_PROVIDERS = frozenset({fitbit_gh.NAME, garmin.NAME, oura.NAME})
+# Providers whose data is PULLED per-day via the consolidation queue (Garmin pushes instead).
+_PULL_PROVIDERS = (fitbit_gh.NAME, oura.NAME)
 
 
 def _generate_entry_code(db: Session) -> str:
@@ -566,6 +568,72 @@ def get_set_subscriber(
     return _subscriber_dict(row, cset.gh_project_id or "")
 
 
+@router.get("/oura/webhooks")
+def list_oura_webhooks(_: User = Depends(require_superuser)) -> list[dict]:
+    """List the app-level Oura webhook subscriptions, live from Oura (no local table —
+    Oura's list endpoint is the source of truth)."""
+    try:
+        return oura.list_webhook_subscriptions()
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"oura_status": exc.response.status_code, "oura_body": exc.response.text},
+        ) from exc
+
+
+@router.post("/oura/webhooks", status_code=201)
+def ensure_oura_webhooks(_: User = Depends(require_superuser)) -> dict:
+    """Idempotently create the configured (data_type x event_type) Oura webhook subscriptions.
+
+    App-level, one-time (then auto-renewed by the scheduler). Oura fires the GET challenge
+    at OURA_WEBHOOK_PUBLIC_URL synchronously, so the webhook endpoint must already be
+    publicly reachable and OURA_WEBHOOK_VERIFICATION_TOKEN set, or creation fails.
+    """
+    settings = get_settings()
+    if not settings.oura_client_id or not settings.oura_client_secret:
+        raise HTTPException(status_code=400, detail="OURA_CLIENT_ID/SECRET not configured")
+    if not settings.oura_webhook_verification_token:
+        raise HTTPException(status_code=400, detail="OURA_WEBHOOK_VERIFICATION_TOKEN not set")
+    try:
+        existing = {
+            (s.get("data_type"), s.get("event_type")) for s in oura.list_webhook_subscriptions()
+        }
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"oura_status": exc.response.status_code, "oura_body": exc.response.text},
+        ) from exc
+    results = []
+    for data_type in settings.oura_webhook_data_types.split():
+        for event_type in settings.oura_webhook_event_types.split():
+            if (data_type, event_type) in existing:
+                results.append({"data_type": data_type, "event_type": event_type,
+                                "status": "exists"})
+                continue
+            try:
+                sub = oura.create_webhook_subscription(data_type, event_type)
+                results.append({"data_type": data_type, "event_type": event_type,
+                                "status": "created", "id": sub.get("id"),
+                                "expiration_time": sub.get("expiration_time")})
+            except httpx.HTTPStatusError as exc:
+                results.append({"data_type": data_type, "event_type": event_type,
+                                "status": "error", "oura_status": exc.response.status_code,
+                                "oura_body": exc.response.text[:300]})
+    return {"subscriptions": results}
+
+
+@router.delete("/oura/webhooks/{sub_id}", status_code=204)
+def delete_oura_webhook(sub_id: str, _: User = Depends(require_superuser)) -> Response:
+    try:
+        oura.delete_webhook_subscription(sub_id)
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"oura_status": exc.response.status_code, "oura_body": exc.response.text},
+        ) from exc
+    return Response(status_code=204)
+
+
 @router.post("/subscriptions/sync")
 def sync_subscriptions(
     subject_id: int | None = None,
@@ -760,19 +828,33 @@ def consolidate_subject(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> dict:
-    """On-demand: (re)build daily_health for a subject over [start, end] by pulling from Google.
-    Used for backfilling history and verification. Idempotent per day. Requires study-admin."""
+    """On-demand: (re)build daily_health for a subject over [start, end] by pulling from the
+    provider. Used for backfilling history and verification. Idempotent per day. Study-admin."""
     if end < start:
         raise HTTPException(status_code=400, detail="end must be >= start")
     if (end - start).days > 120:
         raise HTTPException(status_code=400, detail="range too large (max 120 days)")
     assert_study_admin(db, user, study_id_for_subject(db, subject_id))
-    # Consolidation is a Google *pull*; Garmin self-aggregates from pushes, so it has no pull path.
-    acct = _require_account(db, subject_id, fitbit_gh.NAME)
+    # Consolidation is a *pull* (Google or Oura); Garmin self-aggregates from pushes instead.
+    acct = db.scalar(
+        select(ProviderAccount).where(
+            ProviderAccount.subject_id == subject_id,
+            ProviderAccount.provider.in_(_PULL_PROVIDERS),
+        )
+    )
+    if acct is None:
+        if db.get(Subject, subject_id) is None:
+            raise HTTPException(status_code=404, detail="Subject not found")
+        raise HTTPException(
+            status_code=404, detail="No pull-provider (fitbit_gh/oura) account for that subject"
+        )
+    consolidate = (
+        oura_ingest.consolidate_day if acct.provider == oura.NAME else consolidation.consolidate_day
+    )
     days = []
     d = start
     while d <= end:
-        state = consolidation.consolidate_day(db, acct, d)
+        state = consolidate(db, acct, d)
         days.append({"date": d.isoformat(), "status": state.status, "detail": state.detail})
         d += timedelta(days=1)
     return {"subject_id": subject_id, "provider_account_id": acct.id, "days": days}
