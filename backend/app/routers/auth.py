@@ -40,11 +40,23 @@ def _superadmin_emails() -> set[str]:
     return {e.strip().lower() for e in get_settings().superadmin_emails.split(",") if e.strip()}
 
 
+def _split_name(name: str | None) -> tuple[str | None, str | None]:
+    """Split a Google display name into (first, last) on its first space."""
+    full = (name or "").strip()
+    if not full:
+        return None, None
+    first, _, last = full.partition(" ")
+    return first, last.strip() or None
+
+
 def _provision_user(db: Session, email: str, sub: str | None, name: str | None) -> User | None:
     """Return the User for a verified Google identity, or None if not allowlisted.
 
     Allowlist = an existing `users` row, OR an email in SUPERADMIN_EMAILS (bootstrap — created
     as a superuser on first login). Superadmin emails are (re)promoted on every login.
+
+    Only `name` tracks Google. `first_name`/`last_name` are staff-editable (see
+    `PATCH /admin/users/{id}`) and are seeded once at creation, never overwritten here.
     """
     email = email.lower()
     user = db.scalar(select(User).where(User.email == email))
@@ -52,7 +64,15 @@ def _provision_user(db: Session, email: str, sub: str | None, name: str | None) 
     if user is None:
         if not is_boot_super:
             return None
-        user = User(email=email, google_sub=sub, name=name, is_superuser=True)
+        first, last = _split_name(name)
+        user = User(
+            email=email,
+            google_sub=sub,
+            name=name,
+            first_name=first,
+            last_name=last,
+            is_superuser=True,
+        )
         db.add(user)
     else:
         if sub:
@@ -164,6 +184,8 @@ def me(user: User | None = Depends(get_optional_user), db: Session = Depends(get
         "id": user.id,
         "email": user.email,
         "name": user.name,
+        "first_name": user.first_name,
+        "last_name": user.last_name,
         "is_superuser": user.is_superuser,
         "memberships": [{"study_id": m.study_id, "role": m.role} for m in memberships],
     }

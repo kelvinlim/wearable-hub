@@ -97,7 +97,10 @@ researcher auth/RBAC foundation. Built and verified against the live API:
   dark mode) — collapsible sidebar nav (Studies / Subjects / Researchers / About); Google login +
   RBAC (superuser / study-admin / member); studies/subjects/members management; daily + expandable
   intraday views; sleep stage detail; per-subject and whole-study JSON/CSV export. The
-  server-rendered subject `/enroll` page is UMN-branded with participant info. The Subjects table
+  server-rendered subject `/enroll` page is UMN-branded with participant info. Research staff rows
+  are editable (`PATCH /admin/users/{id}`): staff-managed `users.first_name`/`last_name` are kept
+  **separate from `users.name`**, which `_provision_user` overwrites from the Google ID token on
+  every login — never store an editable name there. The Subjects table
   is sortable (Label / Status / Linked, linked-first by default) and shows per-subject health
   indicators from `list_subjects` — battery, last-7-days data coverage, latest-data date, and a
   "stale" badge (computed fields on `SubjectStatusOut`).

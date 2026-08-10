@@ -36,7 +36,11 @@ class User(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     google_sub: Mapped[str | None] = mapped_column(String(255), unique=True, index=True)
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    # `name` is the Google display name — refreshed from the ID token on every login. The
+    # staff-editable first/last are separate columns precisely so login can't clobber them.
     name: Mapped[str | None] = mapped_column(String(255))
+    first_name: Mapped[str | None] = mapped_column(String(128))
+    last_name: Mapped[str | None] = mapped_column(String(128))
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 

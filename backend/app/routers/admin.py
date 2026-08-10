@@ -52,6 +52,7 @@ from app.schemas import (
     SubjectUpdate,
     UserCreate,
     UserOut,
+    UserUpdate,
 )
 from app.security import (
     assert_study_admin,
@@ -1319,8 +1320,58 @@ def create_user(
         raise HTTPException(status_code=400, detail="email required")
     if db.scalar(select(User).where(User.email == email)):
         raise HTTPException(status_code=409, detail=f"{email} is already a researcher")
-    user = User(email=email, name=payload.name, is_superuser=payload.is_superuser)
+    user = User(
+        email=email,
+        name=payload.name,
+        first_name=(payload.first_name or "").strip() or None,
+        last_name=(payload.last_name or "").strip() or None,
+        is_superuser=payload.is_superuser,
+    )
     db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.patch("/users/{user_id}", response_model=UserOut)
+def update_user(
+    user_id: int,
+    payload: UserUpdate,
+    db: Session = Depends(get_db),
+    me: User = Depends(require_superuser),
+) -> User:
+    """Edit a researcher's name, email, and superuser flag. Superuser only.
+
+    Only fields present in the body are applied (a present null clears that field). `name` stays
+    Google-owned; `first_name`/`last_name` are never touched by login, so edits here stick.
+    """
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="user not found")
+
+    fields = payload.model_dump(exclude_unset=True)
+
+    if "email" in fields:
+        email = (fields.pop("email") or "").strip().lower()
+        if not email:
+            raise HTTPException(status_code=400, detail="email required")
+        if email != user.email:
+            if db.scalar(select(User).where(User.email == email)):
+                raise HTTPException(status_code=409, detail=f"{email} is already a researcher")
+            # The stored subject belongs to the old Google identity; drop it so the new address
+            # links cleanly on next login (google_sub is unique-indexed).
+            user.google_sub = None
+            user.email = email
+
+    if fields.get("is_superuser") is False and user.id == me.id:
+        raise HTTPException(status_code=400, detail="cannot remove your own superuser role")
+
+    for key in ("first_name", "last_name"):
+        if key in fields:
+            fields[key] = (fields[key] or "").strip() or None
+
+    for key, value in fields.items():
+        setattr(user, key, value)
     db.commit()
     db.refresh(user)
     return user

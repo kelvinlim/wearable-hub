@@ -4,6 +4,20 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
+## [0.7.0] — 2026-08-10
+
+### Added
+
+- **Edit a research staff member.** The Research staff table gains a Name column and a pencil
+  button opening an edit modal (`PATCH /admin/users/{id}`, superuser only) for first name, last
+  name, email, and the superuser flag — previously a row could only be deleted and re-added.
+  Names live in new `users.first_name` / `users.last_name` columns (migration `0019`, backfilled
+  by splitting the existing display name on its first space) rather than `users.name`, which is
+  overwritten from the Google ID token on **every** login and so can't hold a staff-managed edit;
+  login never touches the new columns. Changing a researcher's email clears their `google_sub`,
+  so the new address links cleanly on their next sign-in, and a superuser cannot demote
+  themselves. The sidebar footer now shows the person's name above their email.
+
 ## [0.6.0] — 2026-08-01
 
 ### Added

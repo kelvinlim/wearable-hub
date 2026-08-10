@@ -168,7 +168,19 @@ class SubjectStatusOut(SubjectOut):
 class UserCreate(BaseModel):
     email: str
     name: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
     is_superuser: bool = False
+
+
+class UserUpdate(BaseModel):
+    """PATCH body for a researcher. Only fields explicitly present are applied (a present field
+    set to null clears that column). `name` is not editable — it's the Google display name."""
+
+    first_name: str | None = None
+    last_name: str | None = None
+    email: str | None = None
+    is_superuser: bool | None = None
 
 
 class UserOut(BaseModel):
@@ -177,6 +189,8 @@ class UserOut(BaseModel):
     id: int
     email: str
     name: str | None
+    first_name: str | None = None
+    last_name: str | None = None
     is_superuser: bool
 
 

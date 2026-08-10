@@ -100,3 +100,13 @@ export function Td({ className, children, ...props }) {
 export function Empty({ children }) {
   return <div className="px-4 py-8 text-center text-sm text-gray-400">{children}</div>;
 }
+
+// Labelled form control — the standard row inside an edit modal.
+export function Field({ label, children }) {
+  return (
+    <label className="block">
+      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">{label}</div>
+      {children}
+    </label>
+  );
+}
