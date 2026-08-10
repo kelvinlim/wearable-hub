@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import { api } from "../api";
 import { providerLabel } from "../lib";
-import { Card, Button, Badge, Input, Th, Td, Empty } from "../ui";
+import { Card, Button, Badge, Input, Th, Td, Empty, Field } from "../ui";
 import SubjectDetail from "./SubjectDetail";
 
 // Compact "start → end" window label for the table; "—" when no window is set.
@@ -368,14 +368,5 @@ function EditSubjectModal({ subject, guard, onClose, onSaved }) {
         </div>
       </Card>
     </div>
-  );
-}
-
-function Field({ label, children }) {
-  return (
-    <label className="block">
-      <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">{label}</div>
-      {children}
-    </label>
   );
 }

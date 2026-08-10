@@ -50,6 +50,7 @@ export default function Layout({
   ];
   const showStudyPicker = currentView === "studies" || currentView === "subjects";
   const role = me?.is_superuser ? "Superuser" : "Researcher";
+  const fullName = [me?.first_name, me?.last_name].filter(Boolean).join(" ") || me?.name || "";
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -112,7 +113,8 @@ export default function Layout({
             </div>
             {open && (
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">{me?.email}</p>
+                <p className="truncate text-sm font-medium">{fullName || me?.email}</p>
+                {fullName && <p className="truncate text-[11px] text-white/70">{me?.email}</p>}
                 <p className="truncate text-[10px] italic text-white/60">{role}</p>
               </div>
             )}
