@@ -157,6 +157,11 @@ Restricted-scope review.
   Migration `0014` moved existing codes onto each subject's fitbit account. For Garmin the
   repurposed columns: `state`=request token, `code_verifier`=request secret, `access_token`=UAT,
   `refresh_token`=token secret, `provider_user_id`=`userId`.
+- **Which provider next?** See
+  [docs/wearable-provider-landscape.md](docs/wearable-provider-landscape.md) — validation +
+  API survey. Short version: Whoop/Withings/Polar are drop-in (OAuth2 + webhooks, shaped like
+  the Oura module); **Apple and Samsung cannot be provider modules at all** (no server-side API
+  — both need a participant-facing mobile app). Re-check vendor terms before promising one.
 
 **Prod on lnpitask runs under Podman Quadlets**, not compose. Sources are checked in at
 [deploy/quadlet/](deploy/quadlet/) and installed to `/etc/containers/systemd/`
