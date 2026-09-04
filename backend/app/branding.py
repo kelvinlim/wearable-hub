@@ -8,6 +8,11 @@ URLs Google's OAuth review checks are plain, publicly reachable HTML.
 
 from fastapi.responses import HTMLResponse
 
+# Google Search Console URL-prefix property https://lnpitask.umn.edu/ (kolim@umn.edu).
+# Injected into every public server-rendered page; the HTML-file alternate lives on
+# `GET /googleab133fa5c92da19b.html` in `routers/public.py`. Not mystery markup.
+GOOGLE_SITE_VERIFICATION = "kEH-U4CbQN_c90g8E-NtcH1h8eYYf1FBdZcNeG8f-L4"
+
 # UMN palette. The "M" tile is a stylized placeholder — drop the official UMN wordmark in
 # to replace it.
 STYLE = """
@@ -46,6 +51,7 @@ def page(title: str, body: str, status_code: int = 200) -> HTMLResponse:
     html = (
         f"<!doctype html><html lang='en'><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        f"<meta name='google-site-verification' content='{GOOGLE_SITE_VERIFICATION}' />"
         f"<title>{title} — University of Minnesota</title>"
         "<link rel='preconnect' href='https://fonts.googleapis.com'>"
         "<link href='https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap' rel='stylesheet'>"

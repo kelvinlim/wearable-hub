@@ -106,9 +106,18 @@ weeks; CASA ~2–3 weeks).
       backend deployed.
 - [ ] Re-spot-check `/enroll` shows the disclosure block + working `/privacy` link before submitting.
 
-### Step 5 — Verify domain ownership 🔜 (may need UMN DNS)
-- [ ] In **Google Search Console**, verify `lnpitask.umn.edu` using an account with Owner/Editor
-      on the project (may need a UMN DNS TXT record or web-admin help).
+### Step 5 — Verify domain ownership 🔜
+- [x] Search Console **URL-prefix** token for `https://lnpitask.umn.edu/` (property under
+      `kolim@umn.edu`) is in the app — not mystery markup:
+      - HTML meta `google-site-verification` in `backend/app/branding.py` `page()` `<head>`
+        (homepage, privacy, enroll shell).
+      - HTML-file alternate: `GET`/`HEAD` `/googleab133fa5c92da19b.html` on
+        `backend/app/routers/public.py` (body
+        `google-site-verification: kEH-U4CbQN_c90g8E-NtcH1h8eYYf1FBdZcNeG8f-L4`).
+        Host nginx exact-match is in `deploy/nginx/wearable-hub.conf` (no catch-all root
+        proxy — merge + reload on lnpitask before using the file method).
+- [ ] Deploy backend (+ nginx location if using the HTML file), then click **Verify** in
+      Search Console. DNS TXT is not required for the meta / HTML-file methods.
 
 ### Step 6 — Consent screen + scopes in Cloud Console 🔜
 - [ ] User type = **External**.
