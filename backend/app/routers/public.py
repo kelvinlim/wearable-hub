@@ -11,9 +11,9 @@ Contact / PI / IRB details are constants below — update them if the study cont
 from pathlib import Path
 
 from fastapi import APIRouter
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 
-from app.branding import page
+from app.branding import GOOGLE_SITE_VERIFICATION, page
 
 router = APIRouter(tags=["public"])
 
@@ -65,6 +65,20 @@ def homepage() -> HTMLResponse:
         f"<p class='muted'>Questions? Contact the study team at {SUPPORT_EMAIL}.</p>"
     )
     return page("Wearable Hub", body)
+
+
+# Google Search Console HTML-file verification (URL-prefix property).
+# Body is the one-line token Google's crawler expects; GET+HEAD so a HEAD probe
+# doesn't 405. Host nginx needs an exact-match location (see wearable-hub.conf)
+# — there is no catch-all root proxy.
+GSC_HTML_FILE = "googleab133fa5c92da19b.html"
+GSC_HTML_BODY = f"google-site-verification: {GOOGLE_SITE_VERIFICATION}"
+
+
+@router.api_route(f"/{GSC_HTML_FILE}", methods=["GET", "HEAD"], include_in_schema=False)
+def google_site_verification_file() -> PlainTextResponse:
+    """Search Console HTML-file ownership proof for https://lnpitask.umn.edu/."""
+    return PlainTextResponse(GSC_HTML_BODY)
 
 
 # GET+HEAD: Garmin's branding-image validator probes the URL with a HEAD
