@@ -1,5 +1,6 @@
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { maskSubjectCsvFields } from "./utils/phi.js";
 
 export const cn = (...a) => twMerge(clsx(a));
 
@@ -109,23 +110,27 @@ export function pointsCsv(data) {
   return rows.join("\n");
 }
 
-export function studyDailyCsv(data) {
+export function studyDailyCsv(data, hidePhi = false) {
   const rows = [csvRow(["subject_label", "participant_id", "entry_code", ...DAILY_COLS])];
-  for (const s of data.subjects || [])
+  for (const s of data.subjects || []) {
+    const ids = maskSubjectCsvFields(s.subject, hidePhi);
     for (const d of s.days)
-      rows.push(csvRow([s.subject.subject_label, s.subject.participant_id, codeFor(s, d.provider), ...dailyVals(d)]));
+      rows.push(csvRow([ids.subject_label, ids.participant_id, codeFor(s, d.provider), ...dailyVals(d)]));
+  }
   return rows.join("\n");
 }
 
-export function studyPointsCsv(data) {
+export function studyPointsCsv(data, hidePhi = false) {
   const rows = [
     csvRow(["subject_label", "participant_id", "entry_code", "date", "provider", "datatype", "start_time", "end_time", "value", "tz_offset_seconds"]),
   ];
-  for (const s of data.subjects || [])
+  for (const s of data.subjects || []) {
+    const ids = maskSubjectCsvFields(s.subject, hidePhi);
     for (const d of s.days)
       for (const p of d.points || [])
         rows.push(
-          csvRow([s.subject.subject_label, s.subject.participant_id, codeFor(s, d.provider), d.date, providerLabel(d.provider), p.datatype, p.start_time, p.end_time, p.value, p.tz_offset_seconds])
+          csvRow([ids.subject_label, ids.participant_id, codeFor(s, d.provider), d.date, providerLabel(d.provider), p.datatype, p.start_time, p.end_time, p.value, p.tz_offset_seconds])
         );
+  }
   return rows.join("\n");
 }

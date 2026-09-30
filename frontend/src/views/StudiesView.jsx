@@ -3,6 +3,7 @@ import { Plus, Download, Trash2, HeartPulse, KeyRound } from "lucide-react";
 import { api } from "../api";
 import { Card, Button, Badge, Input, Select, Th, Td, Empty, SectionTitle } from "../ui";
 import { download, studyDailyCsv, studyPointsCsv, ALL_PROVIDERS, providerLabel, providerTone } from "../lib";
+import { usePhiPrivacy } from "../phiPrivacy";
 
 export default function StudiesView({ studies, selectedStudyId, onStudyChange, reloadStudies, canAdmin, isSuper, guard }) {
   const [name, setName] = useState("");
@@ -112,6 +113,7 @@ const INTRADAY_OPTS = [
 ];
 
 function SettingsCard({ study, canAdmin, isSuper, credSets = [], guard, onChanged }) {
+  const { hidePhi } = usePhiPrivacy();
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [fmt, setFmt] = useState("json");
@@ -134,8 +136,8 @@ function SettingsCard({ study, canAdmin, isSuper, credSets = [], guard, onChange
         const data = await api.exportStudy(study.id, from || undefined, to || undefined);
         const base = `study-${(study.name || "study").replace(/\s+/g, "_")}`;
         if (fmt === "json") download(`${base}.json`, "application/json", JSON.stringify(data, null, 2));
-        else if (fmt === "csv-daily") download(`${base}-daily.csv`, "text/csv", studyDailyCsv(data));
-        else download(`${base}-points.csv`, "text/csv", studyPointsCsv(data));
+        else if (fmt === "csv-daily") download(`${base}-daily.csv`, "text/csv", studyDailyCsv(data, hidePhi));
+        else download(`${base}-points.csv`, "text/csv", studyPointsCsv(data, hidePhi));
       } finally { setBusy(false); }
     });
 

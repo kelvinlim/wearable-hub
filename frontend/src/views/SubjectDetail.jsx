@@ -6,6 +6,8 @@ import {
   cn, today, fmtNum, localTime, download, dailyCsv, pointsCsv,
   STAGE_ORDER, stageMinutes, providerLabel,
 } from "../lib";
+import { usePhiPrivacy } from "../phiPrivacy";
+import { subjectDisplayName, subjectExportBasename } from "../utils/phi";
 
 // Pull + consolidate is a synchronous server-side pull; a long range can exceed the gateway
 // timeout, so we send it in windows of this many days each.
@@ -18,6 +20,7 @@ function addDays(iso, n) {
 }
 
 export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
+  const { hidePhi } = usePhiPrivacy();
   const [daily, setDaily] = useState([]);
   const [devices, setDevices] = useState([]);
   const [openDay, setOpenDay] = useState(null);
@@ -63,8 +66,7 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
   const doExport = () =>
     guard(async () => {
       const data = await api.exportSubject(subject.id, exFrom || undefined, exTo || undefined);
-      const who = subject.participant_id || subject.subject_label || `subject-${subject.id}`;
-      const base = `${String(who).replace(/\s+/g, "_")}`;
+      const base = subjectExportBasename(subject, hidePhi);
       if (exFmt === "json") download(`${base}.json`, "application/json", JSON.stringify(data, null, 2));
       else if (exFmt === "csv-daily") download(`${base}-daily.csv`, "text/csv", dailyCsv(data));
       else download(`${base}-points.csv`, "text/csv", pointsCsv(data));
@@ -137,7 +139,7 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
   return (
     <Card className="overflow-hidden">
       <div className="flex flex-wrap items-center gap-3 border-b border-gray-100 p-4 dark:border-neutral-800">
-        <SectionTitle>{subject.participant_id || subject.subject_label || "Subject"}</SectionTitle>
+        <SectionTitle>{subjectDisplayName(subject, hidePhi)}</SectionTitle>
         {(subject.registrations || []).map((r) => (
           <Badge key={r.id} tone={r.registered ? "green" : "gray"} className="gap-1">
             <span className="font-semibold">{providerLabel(r.provider)}</span>
