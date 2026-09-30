@@ -4,6 +4,17 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
+## [0.8.0] — 2026-09-30
+
+### Added
+
+- **Hide PHI in the researcher-console header.** A compact checkbox sits to the left of the
+  version (and dark-mode control) on every console page so a screenshare or hallway glance
+  does not put Study IDs or Google/Fitbit/Oura account labels on the glass. It is a browser
+  display switch (remembered in `localStorage` like dark mode, default off), not a server
+  redaction — API payloads stay identifiable. Subject create/edit form inputs stay unmasked
+  so staff can still type a Study ID. Design: [HIDE_PHI.md](../HIDE_PHI.md).
+
 ## [0.7.0] — 2026-08-10
 
 ### Added

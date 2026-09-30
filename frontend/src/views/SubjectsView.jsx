@@ -5,6 +5,8 @@ import {
 } from "lucide-react";
 import { api } from "../api";
 import { providerLabel } from "../lib";
+import { usePhiPrivacy } from "../phiPrivacy";
+import { maskParticipantId, maskSubjectLabel, subjectDisplayName } from "../utils/phi";
 import { Card, Button, Badge, Input, Th, Td, Empty, Field } from "../ui";
 import SubjectDetail from "./SubjectDetail";
 
@@ -119,6 +121,7 @@ function LatestCell({ s }) {
 }
 
 export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", canAdmin, guard }) {
+  const { hidePhi } = usePhiPrivacy();
   const [subjects, setSubjects] = useState([]);
   const [selected, setSelected] = useState(null);
   const [adding, setAdding] = useState(false);
@@ -228,8 +231,8 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
                     }
                   >
                     <Td><DevicesCell s={s} studyProvider={studyProvider} canAdmin={canAdmin} guard={guard} onChanged={load} /></Td>
-                    <Td className="font-medium">{s.participant_id || <span className="text-gray-300">—</span>}</Td>
-                    <Td>{s.subject_label || <span className="text-gray-300">—</span>}</Td>
+                    <Td className="font-medium">{maskParticipantId(s.participant_id, hidePhi) || dash}</Td>
+                    <Td>{maskSubjectLabel(s, hidePhi) || dash}</Td>
                     <Td><BatteryCell s={s} /></Td>
                     <Td><WeekDataCell s={s} /></Td>
                     <Td><LatestCell s={s} /></Td>
@@ -250,7 +253,7 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
                             <button
                               title="Delete subject (not yet linked)"
                               onClick={() => {
-                                const who = s.participant_id || s.subject_label || `#${s.id}`;
+                                const who = subjectDisplayName(s, hidePhi);
                                 if (!confirm(`Delete subject ${who} and its device registrations? This can't be undone.`)) return;
                                 guard(async () => {
                                   await api.deleteSubject(s.id);
@@ -303,6 +306,7 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
 }
 
 function EditSubjectModal({ subject, guard, onClose, onSaved }) {
+  const { hidePhi } = usePhiPrivacy();
   const [pid, setPid] = useState(subject.participant_id || "");
   const [label, setLabel] = useState(subject.subject_label || "");
   const [start, setStart] = useState(subject.collection_start || "");
@@ -334,7 +338,7 @@ function EditSubjectModal({ subject, guard, onClose, onSaved }) {
           <div className="flex items-center justify-between border-b border-gray-100 p-4 dark:border-neutral-800">
             <h3 className="font-display text-base font-semibold text-maroon dark:text-gold">
               Edit subject
-              <code className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-xs dark:bg-neutral-800">{subject.participant_id || subject.subject_label || `#${subject.id}`}</code>
+              <code className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-xs dark:bg-neutral-800">{subjectDisplayName(subject, hidePhi)}</code>
             </h3>
             <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="h-4 w-4" /></button>
           </div>

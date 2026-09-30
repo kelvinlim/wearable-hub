@@ -13,7 +13,7 @@ import {
   User as UserIcon,
 } from "lucide-react";
 import { cn } from "../lib";
-import { Select } from "../ui";
+import { PhiPrivacyProvider, usePhiPrivacy } from "../phiPrivacy";
 
 const TITLES = {
   studies: "Studies",
@@ -23,7 +23,15 @@ const TITLES = {
   about: "About",
 };
 
-export default function Layout({
+export default function Layout(props) {
+  return (
+    <PhiPrivacyProvider>
+      <LayoutChrome {...props} />
+    </PhiPrivacyProvider>
+  );
+}
+
+function LayoutChrome({
   currentView,
   onNavigate,
   me,
@@ -36,6 +44,7 @@ export default function Layout({
   children,
 }) {
   const [open, setOpen] = useState(true);
+  const { hidePhi, setHidePhi } = usePhiPrivacy();
 
   const nav = [
     { id: "studies", name: "Studies", icon: BookOpen },
@@ -148,13 +157,25 @@ export default function Layout({
               </select>
             </div>
           )}
-          <button
-            onClick={onToggleDark}
-            title="Toggle dark mode"
-            className="ml-auto flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 text-gray-500 transition hover:bg-gray-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
-          >
-            {dark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
-          </button>
+          <div className="ml-auto flex items-center gap-3">
+            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-gray-500 dark:text-neutral-400">
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 accent-maroon"
+                checked={hidePhi}
+                onChange={(e) => setHidePhi(e.target.checked)}
+              />
+              Hide PHI
+            </label>
+            <span className="text-xs text-gray-400 dark:text-neutral-500">v{__APP_VERSION__}</span>
+            <button
+              onClick={onToggleDark}
+              title="Toggle dark mode"
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 text-gray-500 transition hover:bg-gray-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+            >
+              {dark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+            </button>
+          </div>
         </header>
 
         <main className="flex-1 overflow-y-auto bg-gray-50 p-6 dark:bg-neutral-950">{children}</main>

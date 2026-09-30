@@ -95,7 +95,9 @@ Then:
 
 - **Researcher console:** `http://localhost:8020` (prod: `https://lnpitask.umn.edu/wearable/`).
   Sign in with a Google account listed in `SUPERADMIN_EMAILS`; add other researchers + study
-  members from the console. Add the redirect URI to the Google OAuth client first.
+  members from the console. Add the redirect URI to the Google OAuth client first. A header
+  **Hide PHI** checkbox blanks Study IDs and account labels at display time (screenshare /
+  shoulder-surf only — see [HIDE_PHI.md](HIDE_PHI.md)).
 - **Subject enrollment:** `http://localhost:8010/enroll` (prod: `…/enroll`) — subjects enter
   their entry code and authorize via Google.
 
@@ -113,8 +115,8 @@ your callback as an authorized redirect URI, add test users, and select the Heal
 The app version lives in three files that must stay in sync —
 `backend/pyproject.toml`, `backend/app/config.py` (`app_version`, which feeds
 `FastAPI(version=)` and `GET /health`), and `frontend/package.json` (injected into the UI via a
-Vite define, shown in the console header next to "Research console"). Use the helper rather than
-editing them by hand:
+Vite define, shown in the sidebar brand and next to Hide PHI in the main header). Use the
+helper rather than editing them by hand:
 
 ```bash
 scripts/bump-version.sh 0.3.0     # set all three
