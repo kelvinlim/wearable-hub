@@ -97,7 +97,9 @@ Then:
   Sign in with a Google account listed in `SUPERADMIN_EMAILS`; add other researchers + study
   members from the console. Add the redirect URI to the Google OAuth client first. A header
   **Hide PHI** checkbox blanks Study IDs and account labels at display time (screenshare /
-  shoulder-surf only — see [HIDE_PHI.md](HIDE_PHI.md)).
+  shoulder-surf only — see [HIDE_PHI.md](HIDE_PHI.md)). Deleting a participant requires a
+  three-step confirmation (warning + type the Study ID or `su-{id}` + export acknowledgement);
+  the API rejects a DELETE without that body.
 - **Subject enrollment:** `http://localhost:8010/enroll` (prod: `…/enroll`) — subjects enter
   their entry code and authorize via Google.
 

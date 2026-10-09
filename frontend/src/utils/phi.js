@@ -65,3 +65,36 @@ export function maskSubjectCsvFields(subject, hidePhi) {
     participant_id: "",
   };
 }
+
+/**
+ * Tokens the DELETE API accepts as `confirm_participant_id`: the real Study ID
+ * (when set) and always `su-{id}`. The server matches these the same way.
+ */
+export function subjectDeleteConfirmTokens(subject) {
+  const tokens = [];
+  const fallback = subjectFallbackId(subject);
+  if (fallback) tokens.push(fallback);
+  const pid = subject?.participant_id == null ? "" : String(subject.participant_id).trim();
+  if (pid) tokens.push(pid);
+  return tokens;
+}
+
+/**
+ * What the delete modal asks the operator to type.
+ * When Hide PHI is on, only `su-{id}` — the modal must not reveal the Study ID.
+ */
+export function subjectDeletePromptId(subject, hidePhi) {
+  if (hidePhi) return subjectFallbackId(subject);
+  const pid = subject?.participant_id == null ? "" : String(subject.participant_id).trim();
+  return pid || subjectFallbackId(subject);
+}
+
+/** True when `typed` is an accepted confirmation token for this subject. */
+export function typedDeleteConfirmationMatches(subject, typed) {
+  const t = (typed || "").trim();
+  if (!t) return false;
+  const fallback = subjectFallbackId(subject);
+  if (fallback && t.toLowerCase() === fallback.toLowerCase()) return true;
+  const pid = subject?.participant_id == null ? "" : String(subject.participant_id).trim();
+  return Boolean(pid) && t === pid;
+}

@@ -1,12 +1,15 @@
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import {
   Plus, Trash2, Lock, Pencil, X, ChevronUp, ChevronDown,
-  BatteryFull, BatteryWarning, AlertTriangle,
+  BatteryFull, BatteryWarning, AlertTriangle, Download,
 } from "lucide-react";
 import { api } from "../api";
-import { providerLabel } from "../lib";
+import { providerLabel, download, dailyCsv, pointsCsv } from "../lib";
 import { usePhiPrivacy } from "../phiPrivacy";
-import { maskParticipantId, maskSubjectLabel, subjectDisplayName } from "../utils/phi";
+import {
+  maskParticipantId, maskSubjectLabel, subjectDisplayName,
+  subjectDeletePromptId, typedDeleteConfirmationMatches, subjectExportBasename,
+} from "../utils/phi";
 import { Card, Button, Badge, Input, Th, Td, Empty, Field } from "../ui";
 import SubjectDetail from "./SubjectDetail";
 
@@ -128,6 +131,7 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
   const [label, setLabel] = useState("");
   const [pid, setPid] = useState("");
   const [editing, setEditing] = useState(null); // subject being edited, or null
+  const [deleting, setDeleting] = useState(null); // subject in the delete-confirm modal, or null
   const [sort, setSort] = useState({ key: "linked", dir: "desc" }); // linked-first by default
 
   const onSort = (k) =>
@@ -251,16 +255,8 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
                           </button>
                           {!s.registered ? (
                             <button
-                              title="Delete subject (not yet linked)"
-                              onClick={() => {
-                                const who = subjectDisplayName(s, hidePhi);
-                                if (!confirm(`Delete subject ${who} and its device registrations? This can't be undone.`)) return;
-                                guard(async () => {
-                                  await api.deleteSubject(s.id);
-                                  if (selected?.id === s.id) setSelected(null);
-                                  load();
-                                });
-                              }}
+                              title="Delete subject (permanent — extra confirmation required)"
+                              onClick={() => setDeleting(s)}
                               className="text-gray-400 hover:text-red-600"
                             >
                               <Trash2 className="h-4 w-4" />
@@ -301,6 +297,228 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
           }}
         />
       )}
+
+      {deleting && (
+        <DeleteSubjectModal
+          subject={deleting}
+          hidePhi={hidePhi}
+          guard={guard}
+          onClose={() => setDeleting(null)}
+          onDeleted={() => {
+            if (selected?.id === deleting.id) setSelected(null);
+            setDeleting(null);
+            load();
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+const DELETE_HOLD_S = 2;
+
+function DeleteSubjectModal({ subject, hidePhi, guard, onClose, onDeleted }) {
+  const [step, setStep] = useState(1);
+  const [preview, setPreview] = useState(null);
+  const [loadErr, setLoadErr] = useState("");
+  const [typed, setTyped] = useState("");
+  const [exportedAck, setExportedAck] = useState(false);
+  const [exportedNote, setExportedNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [holdLeft, setHoldLeft] = useState(0);
+  const promptId = subjectDeletePromptId(subject, hidePhi);
+  const idMatches = typedDeleteConfirmationMatches(subject, typed);
+
+  useEffect(() => {
+    let alive = true;
+    api.subjectDeletionPreview(subject.id)
+      .then((p) => { if (alive) setPreview(p); })
+      .catch((e) => { if (alive) setLoadErr(e.message || "Failed to load preview"); });
+    return () => { alive = false; };
+  }, [subject.id]);
+
+  useEffect(() => {
+    if (step !== 3 || !exportedAck) {
+      setHoldLeft(0);
+      return undefined;
+    }
+    setHoldLeft(DELETE_HOLD_S);
+    const started = Date.now();
+    const id = setInterval(() => {
+      const left = Math.max(0, DELETE_HOLD_S - Math.floor((Date.now() - started) / 1000));
+      setHoldLeft(left);
+      if (left === 0) clearInterval(id);
+    }, 200);
+    return () => clearInterval(id);
+  }, [step, exportedAck]);
+
+  const doExport = (fmt) =>
+    guard(async () => {
+      const data = await api.exportSubject(subject.id);
+      const base = subjectExportBasename(subject, hidePhi);
+      if (fmt === "json") download(`${base}.json`, "application/json", JSON.stringify(data, null, 2));
+      else if (fmt === "csv-daily") download(`${base}-daily.csv`, "text/csv", dailyCsv(data));
+      else download(`${base}-points.csv`, "text/csv", pointsCsv(data));
+      setExportedNote("Export downloaded. You still need to confirm on the last step.");
+    });
+
+  const doDelete = () =>
+    guard(async () => {
+      setBusy(true);
+      try {
+        await api.deleteSubject(subject.id, {
+          confirm: true,
+          confirm_participant_id: typed.trim(),
+          confirm_exported: true,
+        });
+        onDeleted();
+      } finally {
+        setBusy(false);
+      }
+    });
+
+  const range = preview && (preview.first_date || preview.last_date)
+    ? `${preview.first_date || "…"} → ${preview.last_date || "…"}`
+    : "no data yet";
+  const canDelete = step === 3 && exportedAck && holdLeft === 0 && !busy && preview && !preview.linked;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <Card className="w-full max-w-lg">
+        <div onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-between border-b border-gray-100 p-4 dark:border-neutral-800">
+            <h3 className="font-display text-base font-semibold text-red-700 dark:text-red-400">
+              Permanently delete participant
+            </h3>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="h-4 w-4" /></button>
+          </div>
+
+          <div className="space-y-4 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-400">
+              Step {step} of 3
+            </p>
+
+            {step === 1 && (
+              <>
+                <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200">
+                  <p className="font-semibold">This cannot be undone.</p>
+                  <p className="mt-1">
+                    Revoking a wearable only disconnects the device and <b>keeps</b> the health data.
+                    Deleting the participant destroys every daily row, every intraday point, device
+                    registrations, and the subject record.
+                  </p>
+                </div>
+
+                {loadErr && <p className="text-sm text-red-600">{loadErr}</p>}
+                {!preview && !loadErr && <p className="text-sm text-gray-400">Loading data counts…</p>}
+                {preview && (
+                  <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-sm">
+                    <dt className="text-gray-400">Study</dt>
+                    <dd className="font-medium">{preview.study_name || "—"}</dd>
+                    <dt className="text-gray-400">Study ID</dt>
+                    <dd className="font-medium">
+                      {hidePhi
+                        ? <span className="text-gray-400">hidden — type <code className="rounded bg-gray-100 px-1 dark:bg-neutral-800">{promptId}</code> on the next step</span>
+                        : (preview.participant_id || <span className="text-gray-400">none — use {preview.fallback_id}</span>)}
+                    </dd>
+                    <dt className="text-gray-400">Internal id</dt>
+                    <dd><code className="rounded bg-gray-100 px-1 text-xs dark:bg-neutral-800">{preview.fallback_id}</code></dd>
+                    <dt className="text-gray-400">Daily rows</dt>
+                    <dd>{preview.daily_row_count}</dd>
+                    <dt className="text-gray-400">Intraday points</dt>
+                    <dd>{preview.point_count}</dd>
+                    <dt className="text-gray-400">Date range</dt>
+                    <dd>{range}</dd>
+                  </dl>
+                )}
+
+                <div>
+                  <p className="mb-2 text-sm text-gray-600 dark:text-neutral-300">
+                    Export this participant first. The download uses the same JSON/CSV as the detail view.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="ghost" onClick={() => doExport("json")}><Download className="h-4 w-4" /> JSON</Button>
+                    <Button variant="ghost" onClick={() => doExport("csv-daily")}><Download className="h-4 w-4" /> CSV — daily</Button>
+                    <Button variant="ghost" onClick={() => doExport("csv-points")}><Download className="h-4 w-4" /> CSV — points</Button>
+                  </div>
+                  {exportedNote && <p className="mt-2 text-xs text-gray-500">{exportedNote}</p>}
+                </div>
+              </>
+            )}
+
+            {step === 2 && (
+              <>
+                <p className="text-sm text-gray-600 dark:text-neutral-300">
+                  Type <code className="rounded bg-gray-100 px-1.5 py-0.5 font-semibold dark:bg-neutral-800">{promptId}</code> to continue.
+                  {hidePhi && " Hide PHI is on, so the Study ID is not shown — the internal id is enough."}
+                </p>
+                <Field label="Confirmation">
+                  <Input
+                    className="w-full font-mono"
+                    autoFocus
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={typed}
+                    onChange={(e) => setTyped(e.target.value)}
+                    placeholder={promptId}
+                  />
+                </Field>
+                {typed && !idMatches && (
+                  <p className="text-xs text-red-600">That does not match.</p>
+                )}
+              </>
+            )}
+
+            {step === 3 && (
+              <>
+                <p className="text-sm text-gray-600 dark:text-neutral-300">
+                  Last step. After you check the box there is a short pause before Delete is enabled.
+                </p>
+                <label className="flex items-start gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={exportedAck}
+                    onChange={(e) => setExportedAck(e.target.checked)}
+                  />
+                  <span>
+                    I have exported or backed up this participant&apos;s data. I understand it will be
+                    permanently destroyed.
+                  </span>
+                </label>
+                {preview?.linked && (
+                  <p className="text-sm text-red-600">
+                    This subject is still linked. Revoke their wearable access first.
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+
+          <div className="flex justify-end gap-2 border-t border-gray-100 p-4 dark:border-neutral-800">
+            {step === 1 && (
+              <>
+                <Button variant="subtle" onClick={onClose}>Cancel</Button>
+                <Button onClick={() => setStep(2)} disabled={!preview || preview.linked}>Continue</Button>
+              </>
+            )}
+            {step === 2 && (
+              <>
+                <Button variant="subtle" onClick={() => setStep(1)}>Back</Button>
+                <Button onClick={() => setStep(3)} disabled={!idMatches}>Continue</Button>
+              </>
+            )}
+            {step === 3 && (
+              <>
+                <Button variant="subtle" onClick={() => setStep(2)}>Back</Button>
+                <Button variant="danger" onClick={doDelete} disabled={!canDelete}>
+                  {busy ? "Deleting…" : holdLeft > 0 ? `Wait ${holdLeft}s…` : "Delete participant"}
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      </Card>
     </div>
   );
 }

@@ -4,6 +4,25 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
+## [0.8.1] — 2026-10-09
+
+### Changed
+
+- **Harder to accidentally delete a participant.** Staff had been using the revoke-then-trash
+  flow without realizing trash permanently destroys health data (revoke still only disconnects
+  the device and keeps the rows). The Subjects trash icon now opens a three-step modal:
+  (1) a permanent-delete warning with study, Study ID, daily-row / intraday-point counts and
+  date range from `GET /admin/subjects/{id}/deletion-preview`, plus JSON/CSV export buttons;
+  (2) type the exact Study ID (`su-{id}` when Hide PHI is on, or when the subject has no Study
+  ID); (3) a required "I have exported or backed up this data" checkbox, then a 2-second hold
+  before Delete enables. `DELETE /admin/subjects/{id}` now **requires** a JSON body
+  `{confirm: true, confirm_participant_id, confirm_exported: true}` — a missing body, a
+  mismatched id, or `confirm`/`confirm_exported` false returns 400 so an old frontend or a
+  stray API call cannot delete. The typed id must be the Study ID or `su-{id}` (Hide PHI
+  fallback). Still study-admin / superuser only; still 409 while a provider is linked. Every
+  deletion is logged with the actor, subject, study, and counts. Soft-delete / archive is a
+  follow-up (this release still hard-deletes after the confirmations).
+
 ## [0.8.0] — 2026-09-30
 
 ### Added
