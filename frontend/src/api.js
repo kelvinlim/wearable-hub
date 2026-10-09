@@ -42,7 +42,12 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
-  deleteSubject: (subjectId) => req(`/admin/subjects/${subjectId}`, { method: "DELETE" }),
+  subjectDeletionPreview: (subjectId) => req(`/admin/subjects/${subjectId}/deletion-preview`),
+  deleteSubject: (subjectId, confirmation) =>
+    req(`/admin/subjects/${subjectId}`, {
+      method: "DELETE",
+      body: JSON.stringify(confirmation),
+    }),
   addRegistration: (subjectId, provider) =>
     req(`/admin/subjects/${subjectId}/registrations`, {
       method: "POST",

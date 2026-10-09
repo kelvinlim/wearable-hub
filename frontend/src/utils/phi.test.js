@@ -5,9 +5,12 @@ import {
   maskParticipantId,
   maskSubjectCsvFields,
   maskSubjectLabel,
+  subjectDeleteConfirmTokens,
+  subjectDeletePromptId,
   subjectDisplayName,
   subjectExportBasename,
   subjectFallbackId,
+  typedDeleteConfirmationMatches,
 } from "./phi.js";
 
 const subject = {
@@ -59,5 +62,18 @@ describe("Hide PHI helpers", () => {
       subject_label: "su-42",
       participant_id: "",
     });
+  });
+
+  it("delete confirm accepts Study ID or su-{id}", () => {
+    assert.deepEqual(subjectDeleteConfirmTokens(subject), ["su-42", "P-001"]);
+    assert.equal(subjectDeletePromptId(subject, false), "P-001");
+    assert.equal(subjectDeletePromptId(subject, true), "su-42");
+    assert.equal(subjectDeletePromptId({ id: 7 }, false), "su-7");
+    assert.ok(typedDeleteConfirmationMatches(subject, "P-001"));
+    assert.ok(typedDeleteConfirmationMatches(subject, "su-42"));
+    assert.ok(typedDeleteConfirmationMatches(subject, "SU-42"));
+    assert.equal(typedDeleteConfirmationMatches(subject, "p-001"), false);
+    assert.equal(typedDeleteConfirmationMatches(subject, "P-999"), false);
+    assert.equal(typedDeleteConfirmationMatches(subject, ""), false);
   });
 });

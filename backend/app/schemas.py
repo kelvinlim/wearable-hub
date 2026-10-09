@@ -109,6 +109,35 @@ class SubjectUpdate(BaseModel):
     collection_end: date | None = None
 
 
+class SubjectDeleteConfirm(BaseModel):
+    """Required JSON body for DELETE /admin/subjects/{id}.
+
+    A request without this body (or with confirm/confirm_exported false, or a mismatched
+    confirm_participant_id) is rejected so an old client or a stray DELETE cannot destroy
+    health data. `confirm_participant_id` must be the subject's Study ID or `su-{id}`.
+    """
+
+    confirm: bool = False
+    confirm_participant_id: str = ""
+    confirm_exported: bool = False
+
+
+class SubjectDeletionPreview(BaseModel):
+    """Counts + identity shown in the researcher-console delete-confirmation modal."""
+
+    id: int
+    study_id: int
+    study_name: str
+    participant_id: str | None
+    subject_label: str | None
+    fallback_id: str  # su-{id} — always accepted as confirm_participant_id
+    linked: bool
+    daily_row_count: int
+    point_count: int
+    first_date: date | None
+    last_date: date | None
+
+
 class SubjectOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 

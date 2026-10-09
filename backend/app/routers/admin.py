@@ -6,11 +6,13 @@ study's subjects + members, 'member' is read-only). Project-level ops are superu
 """
 
 import json
+import logging
 import secrets
 from datetime import date, timedelta
+from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Response
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Response
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
@@ -47,6 +49,8 @@ from app.schemas import (
     StudyOut,
     StudyUpdate,
     SubjectCreate,
+    SubjectDeleteConfirm,
+    SubjectDeletionPreview,
     SubjectOut,
     SubjectStatusOut,
     SubjectUpdate,
@@ -63,6 +67,7 @@ from app.security import (
 )
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+log = logging.getLogger(__name__)
 
 # Airline record-locator style: 6 chars, uppercase. Ambiguous glyphs (I, L, O, 0, 1) are
 # excluded so subjects can't mis-key them. 31^6 ≈ 887M combinations (collisions retried below).
@@ -375,16 +380,128 @@ def update_subject(
     return subj
 
 
-@router.delete("/subjects/{subject_id}", status_code=204)
-def delete_subject(
+def _subject_confirm_tokens(subj: Subject) -> set[str]:
+    """IDs the DELETE body may send as confirm_participant_id.
+
+    Always includes `su-{id}` (the Hide-PHI fallback) so a screenshare-safe confirm still
+    uniquely identifies the row. Also accepts the exact Study ID when one is set.
+    """
+    tokens = {f"su-{subj.id}"}
+    pid = (subj.participant_id or "").strip()
+    if pid:
+        tokens.add(pid)
+    return tokens
+
+
+def _confirm_id_matches(subj: Subject, typed: str) -> bool:
+    typed = (typed or "").strip()
+    if not typed:
+        return False
+    if typed in _subject_confirm_tokens(subj):
+        return True
+    # `su-{id}` is accepted case-insensitively; Study IDs stay exact (they may be case-significant).
+    return typed.lower() == f"su-{subj.id}"
+
+
+def _subject_data_counts(
+    db: Session, acct_ids: list[int]
+) -> tuple[int, int, date | None, date | None]:
+    """(daily_rows, intraday_points, first_local_date, last_local_date) for the subject's devices."""
+    if not acct_ids:
+        return 0, 0, None, None
+    daily_n = db.scalar(
+        select(func.count()).select_from(DailyHealth).where(DailyHealth.provider_account_id.in_(acct_ids))
+    ) or 0
+    point_n = db.scalar(
+        select(func.count())
+        .select_from(HealthDataPoint)
+        .where(HealthDataPoint.provider_account_id.in_(acct_ids))
+    ) or 0
+    first = db.scalar(
+        select(func.min(DailyHealth.local_date)).where(DailyHealth.provider_account_id.in_(acct_ids))
+    )
+    last = db.scalar(
+        select(func.max(DailyHealth.local_date)).where(DailyHealth.provider_account_id.in_(acct_ids))
+    )
+    if first is None:
+        first = db.scalar(
+            select(func.min(HealthDataPoint.local_date)).where(
+                HealthDataPoint.provider_account_id.in_(acct_ids)
+            )
+        )
+        last = db.scalar(
+            select(func.max(HealthDataPoint.local_date)).where(
+                HealthDataPoint.provider_account_id.in_(acct_ids)
+            )
+        )
+    return int(daily_n), int(point_n), first, last
+
+
+def _deletion_preview(db: Session, subj: Subject) -> SubjectDeletionPreview:
+    study = db.get(Study, subj.study_id)
+    accounts = list(db.scalars(select(ProviderAccount).where(ProviderAccount.subject_id == subj.id)))
+    daily_n, point_n, first, last = _subject_data_counts(db, [a.id for a in accounts])
+    return SubjectDeletionPreview(
+        id=subj.id,
+        study_id=subj.study_id,
+        study_name=study.name if study else "",
+        participant_id=subj.participant_id,
+        subject_label=subj.subject_label,
+        fallback_id=f"su-{subj.id}",
+        linked=any(a.registered for a in accounts),
+        daily_row_count=daily_n,
+        point_count=point_n,
+        first_date=first,
+        last_date=last,
+    )
+
+
+@router.get("/subjects/{subject_id}/deletion-preview", response_model=SubjectDeletionPreview)
+def subject_deletion_preview(
     subject_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
-) -> None:
-    """Delete a subject that hasn't linked a wearable yet. Study admin only. Refuses if any of
-    the subject's provider accounts is registered (revoke first). Cleans up any stray rows."""
+) -> SubjectDeletionPreview:
+    """Identity + data counts for the delete-confirmation modal. Study admin only."""
     subj = db.get(Subject, subject_id)
     if subj is None:
         raise HTTPException(status_code=404, detail="Subject not found")
     assert_study_admin(db, user, subj.study_id)
+    return _deletion_preview(db, subj)
+
+
+@router.delete("/subjects/{subject_id}", status_code=204)
+def delete_subject(
+    subject_id: int,
+    payload: Annotated[SubjectDeleteConfirm | None, Body()] = None,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> None:
+    """Permanently delete a subject and all of their stored health data.
+
+    Study admin / superuser only. Refuses if any provider account is still linked (revoke
+    first). Requires an explicit JSON body so a stray DELETE or an old frontend cannot
+    destroy data: ``{confirm: true, confirm_participant_id, confirm_exported: true}``.
+    ``confirm_participant_id`` must match the Study ID or ``su-{id}``.
+    """
+    subj = db.get(Subject, subject_id)
+    if subj is None:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    assert_study_admin(db, user, subj.study_id)
+
+    body = payload or SubjectDeleteConfirm()
+    if not body.confirm or not body.confirm_exported or not (body.confirm_participant_id or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Confirmation required. Send JSON "
+                '{"confirm": true, "confirm_participant_id": "<Study ID or su-{id}>", '
+                '"confirm_exported": true}.'
+            ),
+        )
+    if not _confirm_id_matches(subj, body.confirm_participant_id):
+        raise HTTPException(
+            status_code=400,
+            detail="confirm_participant_id does not match this subject.",
+        )
 
     accounts = list(db.scalars(select(ProviderAccount).where(ProviderAccount.subject_id == subject_id)))
     if any(a.registered for a in accounts):
@@ -392,6 +509,23 @@ def delete_subject(
             status_code=409, detail="Subject is linked — revoke their access before deleting."
         )
     acct_ids = [a.id for a in accounts]
+    daily_n, point_n, first, last = _subject_data_counts(db, acct_ids)
+    study = db.get(Study, subj.study_id)
+    log.warning(
+        "Deleting subject id=%s participant_id=%r fallback=su-%s study_id=%s study=%r "
+        "by user_id=%s email=%s daily_rows=%s points=%s first_date=%s last_date=%s",
+        subj.id,
+        subj.participant_id,
+        subj.id,
+        subj.study_id,
+        study.name if study else None,
+        user.id,
+        user.email,
+        daily_n,
+        point_n,
+        first,
+        last,
+    )
     if acct_ids:
         for model in (Subscription, DailyHealth, HealthDataPoint, ConsolidationState, HealthData, PairedDevice):
             db.execute(delete(model).where(model.provider_account_id.in_(acct_ids)))
