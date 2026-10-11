@@ -99,6 +99,7 @@ export default function App() {
           studyId={selectedStudyId}
           studyProvider={studies.find((s) => s.id === selectedStudyId)?.provider || "fitbit_gh"}
           canAdmin={canAdmin}
+          isSuper={me.is_superuser}
           guard={guard}
         />
       )}

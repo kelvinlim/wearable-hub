@@ -145,7 +145,7 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
             <span className="font-semibold">{providerLabel(r.provider)}</span>
             <code className="rounded bg-black/5 px-1 text-[11px] dark:bg-white/10">{r.entry_code}</code>
             {r.registered ? "✓ linked" : "not linked"}
-            {r.registered && canAdmin && (
+            {r.registered && canAdmin && !subject.archived && (
               <button
                 title={`Revoke ${providerLabel(r.provider)} authorization`}
                 onClick={() => {
@@ -159,6 +159,7 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
             )}
           </Badge>
         ))}
+        {subject.archived && <Badge tone="maroon">Archived</Badge>}
         {(subject.collection_start || subject.collection_end) && (
           <Badge tone="gold">
             collect {subject.collection_start || "…"} → {subject.collection_end || "…"}
@@ -180,8 +181,11 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
           </Select>
           <Button variant="ghost" onClick={doExport}><Download className="h-4 w-4" /> Download</Button>
           <span className="text-xs text-gray-400">(blank = all)</span>
+          {subject.archived && (
+            <span className="text-xs text-gray-400">Archived — export still works; pulls and backfill are off.</span>
+          )}
         </div>
-        {canAdmin && (
+        {canAdmin && !subject.archived && (
           <div className="flex w-full flex-wrap items-center gap-2 text-sm">
             <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Backfill</span>
             <input type="date" value={start} onChange={(e) => setStart(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800" />

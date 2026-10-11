@@ -567,6 +567,9 @@ def ingest_push(db: Session, datatype_hint: str, body) -> dict[int, ProviderAcco
             )
             if account is None or applier is None:
                 continue
+            subj = db.get(Subject, account.subject_id)
+            if subj is not None and subj.archived_at is not None:
+                continue
             d = _local_date(item)
             if d is None:
                 continue

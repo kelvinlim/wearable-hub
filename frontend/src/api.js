@@ -31,7 +31,12 @@ export const api = {
     req("/admin/studies", { method: "POST", body: JSON.stringify(body) }),
   updateStudy: (studyId, body) =>
     req(`/admin/studies/${studyId}`, { method: "PATCH", body: JSON.stringify(body) }),
-  listSubjects: (studyId) => req(`/admin/studies/${studyId}/subjects`),
+  listSubjects: (studyId, includeArchived = false) =>
+    req(`/admin/studies/${studyId}/subjects${includeArchived ? "?include_archived=true" : ""}`),
+  archiveSubject: (subjectId) =>
+    req(`/admin/subjects/${subjectId}/archive`, { method: "POST" }),
+  unarchiveSubject: (subjectId) =>
+    req(`/admin/subjects/${subjectId}/unarchive`, { method: "POST" }),
   createSubject: (studyId, body) =>
     req(`/admin/studies/${studyId}/subjects`, {
       method: "POST",

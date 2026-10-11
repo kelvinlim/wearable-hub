@@ -4,6 +4,31 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
+## [0.9.0] — 2026-10-11
+
+### Added
+
+- **Archive (soft-delete) for participants.** Study staff can hide finished participants from
+  the default Subjects list without destroying health data. `subjects.archived_at` /
+  `archived_by` (migration `0020`) mark the row; unarchive clears both columns and restores
+  the subject unchanged. Archive is a single confirm (reversible) and is refused while any
+  device is still linked — revoke first; we do **not** auto-revoke, because that would
+  silently cut off a live Fitbit/Garmin/Oura connection. `GET /admin/studies/{id}/subjects`
+  hides archived rows unless `include_archived=true`. The console adds a **Show archived**
+  toggle and an **Archived** badge; archived subjects can still be opened and exported
+  (JSON/CSV). Pull / backfill / reprocess / new device codes / enroll refuse an archived
+  subject; nightly and both consolidate paths skip them as belt-and-suspenders (they should
+  already be revoked). Every archive and unarchive is logged with actor, subject, and study.
+
+### Changed
+
+- **Permanent delete is now a superuser-only last step on an archived subject.** Study
+  admins tidy the list with Archive; they can no longer hard-delete. The trash icon appears
+  only on archived rows and only for superusers, and still uses the PR #32 three-step
+  confirmation plus `{confirm, confirm_participant_id, confirm_exported}`. A DELETE of a
+  non-archived subject returns 409 (`Archive this subject before permanently deleting.`).
+  Linked still 409; members still 403.
+
 ## [0.8.1] — 2026-10-09
 
 ### Changed

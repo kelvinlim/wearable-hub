@@ -17,7 +17,7 @@ from sqlalchemy import select
 
 from app import consolidation
 from app.db import SessionLocal
-from app.models import ProviderAccount
+from app.models import ProviderAccount, Subject
 from app.providers import fitbit_gh, oura
 
 log = logging.getLogger(__name__)
@@ -31,9 +31,12 @@ def run(days_back: int = 2) -> dict:
         targets = [today - timedelta(days=i) for i in range(days_back + 1)]
         accounts = list(
             db.scalars(
-                select(ProviderAccount).where(
+                select(ProviderAccount)
+                .join(Subject, Subject.id == ProviderAccount.subject_id)
+                .where(
                     ProviderAccount.provider.in_((fitbit_gh.NAME, oura.NAME)),
                     ProviderAccount.registered.is_(True),
+                    Subject.archived_at.is_(None),
                 )
             )
         )

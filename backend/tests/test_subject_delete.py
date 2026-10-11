@@ -86,11 +86,18 @@ def _confirm(participant_id, **extra):
     return body
 
 
+def _archive(client, subject_id):
+    r = client.post(f"/admin/subjects/{subject_id}/archive")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
 def test_delete_refused_without_confirmation(ctx):
     as_user, ids, Session = ctx
-    admin = as_user(ids["admin"])
-    subj = _add_subject(admin, ids["study"])
-    r = admin.delete(f"/admin/subjects/{subj['id']}")
+    su = as_user(ids["su"])
+    subj = _add_subject(su, ids["study"])
+    _archive(su, subj["id"])
+    r = su.delete(f"/admin/subjects/{subj['id']}")
     assert r.status_code == 400, r.text
     assert "Confirmation required" in r.json()["detail"]
     db = Session()
@@ -100,9 +107,10 @@ def test_delete_refused_without_confirmation(ctx):
 
 def test_delete_refused_with_mismatched_id(ctx):
     as_user, ids, Session = ctx
-    admin = as_user(ids["admin"])
-    subj = _add_subject(admin, ids["study"], "P-001")
-    r = admin.request(
+    su = as_user(ids["su"])
+    subj = _add_subject(su, ids["study"], "P-001")
+    _archive(su, subj["id"])
+    r = su.request(
         "DELETE", f"/admin/subjects/{subj['id']}", json=_confirm("P-999")
     )
     assert r.status_code == 400, r.text
@@ -114,9 +122,10 @@ def test_delete_refused_with_mismatched_id(ctx):
 
 def test_delete_allowed_with_correct_confirmation(ctx):
     as_user, ids, Session = ctx
-    admin = as_user(ids["admin"])
-    subj = _add_subject(admin, ids["study"], "P-001")
-    r = admin.request(
+    su = as_user(ids["su"])
+    subj = _add_subject(su, ids["study"], "P-001")
+    _archive(su, subj["id"])
+    r = su.request(
         "DELETE", f"/admin/subjects/{subj['id']}", json=_confirm("P-001")
     )
     assert r.status_code == 204, r.text
@@ -127,9 +136,10 @@ def test_delete_allowed_with_correct_confirmation(ctx):
 
 def test_delete_allowed_with_su_fallback_id(ctx):
     as_user, ids, Session = ctx
-    admin = as_user(ids["admin"])
-    subj = _add_subject(admin, ids["study"], "P-001")
-    r = admin.request(
+    su = as_user(ids["su"])
+    subj = _add_subject(su, ids["study"], "P-001")
+    _archive(su, subj["id"])
+    r = su.request(
         "DELETE",
         f"/admin/subjects/{subj['id']}",
         json=_confirm(f"su-{subj['id']}"),
@@ -142,9 +152,10 @@ def test_delete_allowed_with_su_fallback_id(ctx):
 
 def test_delete_refused_when_confirm_false(ctx):
     as_user, ids, Session = ctx
-    admin = as_user(ids["admin"])
-    subj = _add_subject(admin, ids["study"])
-    r = admin.request(
+    su = as_user(ids["su"])
+    subj = _add_subject(su, ids["study"])
+    _archive(su, subj["id"])
+    r = su.request(
         "DELETE",
         f"/admin/subjects/{subj['id']}",
         json=_confirm("P-001", confirm=False),
@@ -157,9 +168,10 @@ def test_delete_refused_when_confirm_false(ctx):
 
 def test_delete_refused_when_export_not_acked(ctx):
     as_user, ids, Session = ctx
-    admin = as_user(ids["admin"])
-    subj = _add_subject(admin, ids["study"])
-    r = admin.request(
+    su = as_user(ids["su"])
+    subj = _add_subject(su, ids["study"])
+    _archive(su, subj["id"])
+    r = su.request(
         "DELETE",
         f"/admin/subjects/{subj['id']}",
         json=_confirm("P-001", confirm_exported=False),
@@ -172,14 +184,14 @@ def test_delete_refused_when_export_not_acked(ctx):
 
 def test_delete_refused_while_linked(ctx):
     as_user, ids, Session = ctx
-    admin = as_user(ids["admin"])
-    subj = _add_subject(admin, ids["study"])
+    su = as_user(ids["su"])
+    subj = _add_subject(su, ids["study"])
     db = Session()
     acct = db.scalar(select(ProviderAccount).where(ProviderAccount.subject_id == subj["id"]))
     acct.registered = True
     db.commit()
     db.close()
-    r = admin.request(
+    r = su.request(
         "DELETE", f"/admin/subjects/{subj['id']}", json=_confirm("P-001")
     )
     assert r.status_code == 409, r.text

@@ -97,6 +97,12 @@ def enroll_start(entry_code: str = Form(...), db: Session = Depends(get_db)):
         return RedirectResponse(
             url=f"{pfx}/enroll?error=This+code+has+already+been+registered", status_code=303
         )
+    subject = db.get(Subject, acct.subject_id)
+    if subject is not None and subject.archived_at is not None:
+        return RedirectResponse(
+            url=f"{pfx}/enroll?error=This+participant+is+no+longer+accepting+devices",
+            status_code=303,
+        )
 
     if acct.provider == garmin.NAME:
         try:

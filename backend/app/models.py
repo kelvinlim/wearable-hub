@@ -153,12 +153,21 @@ class Subject(Base):
     # Either bound may be null = unbounded on that side.
     collection_start: Mapped[date | None] = mapped_column(Date)
     collection_end: Mapped[date | None] = mapped_column(Date)
+    # Soft-delete: set when staff archive a finished (revoked/unlinked) participant.
+    # The default Subjects list hides these; unarchive clears both columns. Health
+    # data is kept until a superuser permanently deletes an archived subject.
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    archived_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     study: Mapped["Study"] = relationship(back_populates="subjects")
     provider_accounts: Mapped[list["ProviderAccount"]] = relationship(
         back_populates="subject", cascade="all, delete-orphan"
     )
+
+    @property
+    def archived(self) -> bool:
+        return self.archived_at is not None
 
 
 class ProviderAccount(Base):

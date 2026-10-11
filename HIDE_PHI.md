@@ -56,8 +56,9 @@ columns. The subject-identifying fields it paints are:
 | --- | --- | --- |
 | `participant_id` ("Study ID") | The study's own subject identifier | Blank (`—`) |
 | `subject_label` ("Label") | Google / Fitbit / Oura account label | `su-{id}` (GRID-style display-id fallback) |
-| Read-only titles, delete confirms, export **filenames** | Built from Study ID or label | `su-{id}` |
-| Subject **delete modal** (type-to-confirm) | Asks the operator to type an id | Prompt is `su-{id}` only. The real Study ID is **not** shown. The API also accepts the real Study ID if typed. |
+| Read-only titles, archive/delete confirms, export **filenames** | Built from Study ID or label | `su-{id}` |
+| Subject **archive modal** (single confirm) | Names the participant being hidden | Uses `subjectDisplayName` → `su-{id}` when hidden. |
+| Subject **delete modal** (type-to-confirm) | Asks the operator to type an id | Prompt is `su-{id}` only. The real Study ID is **not** shown. The API also accepts the real Study ID if typed. Superuser + archived only. |
 | Subject create/edit **form inputs** | Staff data entry | Unmasked |
 | Study-wide CSV `subject_label` / `participant_id` columns | Visible identifier columns | label → `su-{id}`; Study ID blanked |
 | JSON export body | Raw API payload | Unchanged |
@@ -73,7 +74,7 @@ applies the same functions.
 | Page | What Hide PHI changes |
 | --- | --- |
 | Header (all views) | Checkbox; preference shared via `PhiPrivacyContext`. Version shown next to it. |
-| Subjects list | Study ID → `—`; Label → `su-{id}`. Delete is a 3-step modal (warning + type-to-confirm + export ack); when hidden the typed token is `su-{id}`. |
+| Subjects list | Study ID → `—`; Label → `su-{id}`. Archive confirm uses `su-{id}`. Delete is a 3-step modal on archived rows (superuser only); when hidden the typed token is `su-{id}`. |
 | Subjects create form | Unmasked (staff entry). |
 | Subjects edit modal | Inputs unmasked; the read-only title chip is masked. |
 | Subject detail | Heading uses `su-{id}`; download filenames use `su-{id}`. JSON/CSV **bodies** of the per-subject export are the raw payload (no identifier columns). |
@@ -112,9 +113,10 @@ fetched). That is a different product decision. v1 is display-only on purpose.
 
 ## Docs / version
 
-- Version **0.8.1** (`frontend/package.json`, `backend/pyproject.toml`,
+- Version **0.9.0** (`frontend/package.json`, `backend/pyproject.toml`,
   `backend/app/config.py`). Hide PHI itself shipped in 0.8.0; 0.8.1 is the
-  delete-confirmation work that stays compatible with this switch.
+  delete-confirmation work; 0.9.0 adds archive and keeps both the archive
+  confirm and the delete type-to-confirm compatible with this switch.
 - `frontend/CHANGELOG.md` entry (screenshare / shoulder-surf, not a new
   access-control mode).
 - This file is the design record.

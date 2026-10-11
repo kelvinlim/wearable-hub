@@ -132,6 +132,7 @@ class SubjectDeletionPreview(BaseModel):
     subject_label: str | None
     fallback_id: str  # su-{id} — always accepted as confirm_participant_id
     linked: bool
+    archived: bool = False
     daily_row_count: int
     point_count: int
     first_date: date | None
@@ -148,6 +149,9 @@ class SubjectOut(BaseModel):
     status: str
     collection_start: date | None = None
     collection_end: date | None = None
+    archived: bool = False
+    archived_at: datetime | None = None
+    archived_by: int | None = None
     created_at: datetime | None
 
 

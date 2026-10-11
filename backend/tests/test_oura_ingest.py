@@ -310,6 +310,24 @@ def test_consolidate_day_outside_window_skips(db, monkeypatch):
     assert db.scalar(select(DailyHealth)) is None
 
 
+def test_consolidate_day_archived_skips(db, monkeypatch):
+    from datetime import datetime
+
+    acct = _seed(db)
+    subj = db.get(Subject, acct.subject_id)
+    subj.archived_at = datetime.utcnow()
+    db.commit()
+
+    def _boom(*a, **k):
+        raise AssertionError("no API call expected for an archived subject")
+
+    monkeypatch.setattr(oura_ingest, "_fresh_token", _boom)
+    state = oura_ingest.consolidate_day(db, acct, D)
+    assert state.status == "skipped"
+    assert "archived" in (state.detail or "")
+    assert db.scalar(select(DailyHealth)) is None
+
+
 def test_consolidate_day_fault_isolation(db, monkeypatch):
     """One data type's HTTP error is recorded in metrics._errors, the rest still lands."""
     import httpx
