@@ -692,6 +692,10 @@ def _get_or_create_state(db: Session, account_id: int, d: date) -> Consolidation
     return row
 
 
+def _subject_is_archived(subject) -> bool:
+    return bool(subject is not None and subject.archived_at)
+
+
 def _outside_collection_window(subject, d: date) -> bool:
     """True if `d` falls outside the subject's optional [collection_start, collection_end]
     (inclusive, subject-local days). Either bound may be None = unbounded on that side."""
@@ -709,8 +713,15 @@ def consolidate_day(db: Session, account: ProviderAccount, d: date) -> Consolida
 
     Days outside the subject's data-collection window are skipped (no API pull) so the window
     is enforced uniformly across every trigger that routes through here (real-time webhook,
-    nightly safety-net, on-demand backfill)."""
+    nightly safety-net, on-demand backfill). Archived subjects are skipped the same way —
+    they must already be revoked, so this is belt-and-suspenders against a leftover dirty day."""
     state = _get_or_create_state(db, account.id, d)
+    if _subject_is_archived(account.subject):
+        state.status, state.detail, state.completed_at = (
+            "skipped", "subject archived", datetime.utcnow()
+        )
+        db.commit()
+        return state
     if _outside_collection_window(account.subject, d):
         state.status, state.detail, state.completed_at = (
             "skipped", "outside collection window", datetime.utcnow()

@@ -24,6 +24,7 @@ from app.consolidation import (
     _get_or_create_state,
     _outside_collection_window,
     _replace_points_for_day,
+    _subject_is_archived,
 )
 from app.crypto import decrypt, encrypt
 from app.dailywrite import upsert_daily, upsert_point
@@ -314,6 +315,12 @@ def consolidate_day(db: Session, account: ProviderAccount, d: date) -> Consolida
     """Pull + aggregate one Oura subject-day into `daily_health` (+ intraday points).
     Idempotent; same state machine and collection-window semantics as the Google path."""
     state = _get_or_create_state(db, account.id, d)
+    if _subject_is_archived(account.subject):
+        state.status, state.detail, state.completed_at = (
+            "skipped", "subject archived", datetime.utcnow()
+        )
+        db.commit()
+        return state
     if _outside_collection_window(account.subject, d):
         state.status, state.detail, state.completed_at = (
             "skipped", "outside collection window", datetime.utcnow()

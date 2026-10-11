@@ -94,7 +94,7 @@ Designed for the full product; Milestone 1 exercises the starred tables.
 - `users` — researchers/admins: `id, google_sub, email, name, is_superuser, created_at`
   (table created now, populated later when auth lands).
 - `studies`* — `id, name, description, created_by_user_id, created_at`.
-- `subjects`* — `id, study_id(fk), subject_label, entry_code(unique), status, created_at`.
+- `subjects`* — `id, study_id(fk), subject_label, entry_code(unique), status, archived_at, archived_by, created_at`.
 - `provider_accounts`* — one row per subject+provider:
   `id, subject_id(fk), provider('fitbit_gh'|'garmin'), state, code_verifier,
    access_token(enc), refresh_token(enc), token_expires_at, scope, provider_user_id,

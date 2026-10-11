@@ -8,7 +8,7 @@ study's subjects + members, 'member' is read-only). Project-level ops are superu
 import json
 import logging
 import secrets
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Annotated
 
 import httpx
@@ -393,6 +393,22 @@ def _subject_confirm_tokens(subj: Subject) -> set[str]:
     return tokens
 
 
+def _is_archived(subj: Subject) -> bool:
+    return subj.archived_at is not None
+
+
+def _linked_accounts(accounts: list[ProviderAccount]) -> list[ProviderAccount]:
+    return [a for a in accounts if a.registered]
+
+
+def _refuse_if_linked(accounts: list[ProviderAccount], *, action: str) -> None:
+    if _linked_accounts(accounts):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Subject is linked — revoke their access before {action}.",
+        )
+
+
 def _confirm_id_matches(subj: Subject, typed: str) -> bool:
     typed = (typed or "").strip()
     if not typed:
@@ -449,6 +465,7 @@ def _deletion_preview(db: Session, subj: Subject) -> SubjectDeletionPreview:
         subject_label=subj.subject_label,
         fallback_id=f"su-{subj.id}",
         linked=any(a.registered for a in accounts),
+        archived=_is_archived(subj),
         daily_row_count=daily_n,
         point_count=point_n,
         first_date=first,
@@ -468,6 +485,75 @@ def subject_deletion_preview(
     return _deletion_preview(db, subj)
 
 
+@router.post("/subjects/{subject_id}/archive", response_model=SubjectOut)
+def archive_subject(
+    subject_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> Subject:
+    """Hide a finished participant from the default Subjects list. Study admin.
+
+    Reversible (POST …/unarchive). Refuses while any provider account is still linked —
+    revoke first; we do not auto-revoke, because that would silently cut off a live
+    Fitbit/Garmin/Oura connection. Already-archived is a no-op success.
+    """
+    subj = db.get(Subject, subject_id)
+    if subj is None:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    assert_study_admin(db, user, subj.study_id)
+    accounts = list(db.scalars(select(ProviderAccount).where(ProviderAccount.subject_id == subject_id)))
+    _refuse_if_linked(accounts, action="archiving")
+    if not _is_archived(subj):
+        subj.archived_at = datetime.utcnow()
+        subj.archived_by = user.id
+        study = db.get(Study, subj.study_id)
+        log.info(
+            "Archiving subject id=%s participant_id=%r fallback=su-%s study_id=%s study=%r "
+            "by user_id=%s email=%s",
+            subj.id,
+            subj.participant_id,
+            subj.id,
+            subj.study_id,
+            study.name if study else None,
+            user.id,
+            user.email,
+        )
+        db.commit()
+        db.refresh(subj)
+    return subj
+
+
+@router.post("/subjects/{subject_id}/unarchive", response_model=SubjectOut)
+def unarchive_subject(
+    subject_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+) -> Subject:
+    """Restore an archived participant to the default Subjects list. Study admin.
+
+    Clears ``archived_at`` / ``archived_by`` only — status, registrations, and health
+    data are unchanged. Not-archived is a no-op success.
+    """
+    subj = db.get(Subject, subject_id)
+    if subj is None:
+        raise HTTPException(status_code=404, detail="Subject not found")
+    assert_study_admin(db, user, subj.study_id)
+    if _is_archived(subj):
+        study = db.get(Study, subj.study_id)
+        log.info(
+            "Unarchiving subject id=%s participant_id=%r fallback=su-%s study_id=%s study=%r "
+            "by user_id=%s email=%s",
+            subj.id,
+            subj.participant_id,
+            subj.id,
+            subj.study_id,
+            study.name if study else None,
+            user.id,
+            user.email,
+        )
+        subj.archived_at = None
+        subj.archived_by = None
+        db.commit()
+        db.refresh(subj)
+    return subj
+
+
 @router.delete("/subjects/{subject_id}", status_code=204)
 def delete_subject(
     subject_id: int,
@@ -475,17 +561,25 @@ def delete_subject(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> None:
-    """Permanently delete a subject and all of their stored health data.
+    """Permanently delete an *archived* subject and all of their stored health data.
 
-    Study admin / superuser only. Refuses if any provider account is still linked (revoke
-    first). Requires an explicit JSON body so a stray DELETE or an old frontend cannot
-    destroy data: ``{confirm: true, confirm_participant_id, confirm_exported: true}``.
-    ``confirm_participant_id`` must match the Study ID or ``su-{id}``.
+    Superuser only (study admins archive; they cannot destroy rows). The subject must
+    already be archived — refuse a live or merely-revoked row so trash is never the
+    first action. Also refuses if any provider account is still linked (revoke, then
+    archive, then delete). Requires an explicit JSON body so a stray DELETE or an old
+    frontend cannot destroy data: ``{confirm: true, confirm_participant_id,
+    confirm_exported: true}``. ``confirm_participant_id`` must match the Study ID or
+    ``su-{id}``.
     """
     subj = db.get(Subject, subject_id)
     if subj is None:
         raise HTTPException(status_code=404, detail="Subject not found")
     assert_study_admin(db, user, subj.study_id)
+    if not user.is_superuser:
+        raise HTTPException(
+            status_code=403,
+            detail="Superuser only — study admins can archive a participant, not permanently delete.",
+        )
 
     body = payload or SubjectDeleteConfirm()
     if not body.confirm or not body.confirm_exported or not (body.confirm_participant_id or "").strip():
@@ -504,9 +598,11 @@ def delete_subject(
         )
 
     accounts = list(db.scalars(select(ProviderAccount).where(ProviderAccount.subject_id == subject_id)))
-    if any(a.registered for a in accounts):
+    _refuse_if_linked(accounts, action="deleting")
+    if not _is_archived(subj):
         raise HTTPException(
-            status_code=409, detail="Subject is linked — revoke their access before deleting."
+            status_code=409,
+            detail="Archive this subject before permanently deleting.",
         )
     acct_ids = [a.id for a in accounts]
     daily_n, point_n, first, last = _subject_data_counts(db, acct_ids)
@@ -550,6 +646,10 @@ def add_registration(
     if subj is None:
         raise HTTPException(status_code=404, detail="Subject not found")
     assert_study_admin(db, user, subj.study_id)
+    if _is_archived(subj):
+        raise HTTPException(
+            status_code=409, detail="Subject is archived — unarchive before issuing a device code."
+        )
     study = db.get(Study, subj.study_id)
     if study and payload.provider != study.provider:
         raise HTTPException(
@@ -970,6 +1070,7 @@ def consolidate_subject(
     if (end - start).days > 120:
         raise HTTPException(status_code=400, detail="range too large (max 120 days)")
     assert_study_admin(db, user, study_id_for_subject(db, subject_id))
+    _refuse_if_archived_for_sync(db, subject_id)
     # Consolidation is a *pull* (Google or Oura); Garmin self-aggregates from pushes instead.
     acct = db.scalar(
         select(ProviderAccount).where(
@@ -1016,6 +1117,7 @@ def backfill_subject(
     if (end - start).days > 730:
         raise HTTPException(status_code=400, detail="range too large (max 2 years)")
     assert_study_admin(db, user, study_id_for_subject(db, subject_id))
+    _refuse_if_archived_for_sync(db, subject_id)
     acct = _require_account(db, subject_id, garmin.NAME)
     background_tasks.add_task(garmin_backfill.run_backfill, acct.id, start, end)
     types = garmin_backfill.configured_types()
@@ -1044,6 +1146,7 @@ def reprocess_subject(
     from data Garmin already delivered (Fitbit/Google re-derives via `/consolidate` instead).
     Idempotent. Synchronous (local DB work); returns per-datatype applied-item counts. Study-admin."""
     assert_study_admin(db, user, study_id_for_subject(db, subject_id))
+    _refuse_if_archived_for_sync(db, subject_id)
     acct = _require_account(db, subject_id, garmin.NAME)
     counts = garmin_ingest.reprocess_account(db, acct, start=start, end=end)
     return {"subject_id": subject_id, "provider_account_id": acct.id, "counts": counts}
@@ -1236,6 +1339,8 @@ def _subject_export_payload(
         "pi_name": study.pi_name if study else None,
         "irb_approval_number": study.irb_approval_number if study else None,
         "status": subj.status,
+        "archived": _is_archived(subj),
+        "archived_at": subj.archived_at.isoformat() if subj.archived_at else None,
         "registrations": [
             {
                 "provider": a.provider,
@@ -1330,16 +1435,30 @@ def export_study(
     }
 
 
+def _refuse_if_archived_for_sync(db: Session, subject_id: int) -> None:
+    subj = db.get(Subject, subject_id)
+    if subj is not None and _is_archived(subj):
+        raise HTTPException(
+            status_code=409,
+            detail="Subject is archived — unarchive before pulling or requesting a backfill.",
+        )
+
+
 @router.get("/studies/{study_id}/subjects", response_model=list[SubjectStatusOut])
 def list_subjects(
-    study_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    study_id: int,
+    include_archived: bool = False,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> list[SubjectStatusOut]:
+    """List a study's subjects. Archived rows are hidden unless ``include_archived``."""
     if db.get(Study, study_id) is None:
         raise HTTPException(status_code=404, detail="Study not found")
     assert_study_view(db, user, study_id)
-    subjects = db.scalars(
-        select(Subject).where(Subject.study_id == study_id).order_by(Subject.id)
-    )
+    q = select(Subject).where(Subject.study_id == study_id)
+    if not include_archived:
+        q = q.where(Subject.archived_at.is_(None))
+    subjects = db.scalars(q.order_by(Subject.id))
     today = date.today()
     week_ago = today - timedelta(days=6)
     # A day "has data" if it carried any consolidated metric (a row alone isn't enough:

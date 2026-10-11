@@ -103,9 +103,13 @@ researcher auth/RBAC foundation. Built and verified against the live API:
   every login — never store an editable name there. The Subjects table
   is sortable (Label / Status / Linked, linked-first by default) and shows per-subject health
   indicators from `list_subjects` — battery, last-7-days data coverage, latest-data date, and a
-  "stale" badge (computed fields on `SubjectStatusOut`). Deleting a subject is a 3-step console
-  modal plus a required DELETE body (`confirm`, `confirm_participant_id` matching the Study ID
-  or `su-{id}`, `confirm_exported`); a stray/old DELETE is 400. Revoke still keeps the data.
+  "stale" badge (computed fields on `SubjectStatusOut`). Finished participants are **archived**
+  (`archived_at` / `archived_by`, migration `0020`) — hidden from the default Subjects list,
+  still openable/exportable, restore via unarchive. Archive is study-admin, refused while
+  linked (no auto-revoke). Permanent delete is **superuser-only** and only after archive,
+  still the 3-step console modal plus a required DELETE body (`confirm`,
+  `confirm_participant_id` matching the Study ID or `su-{id}`, `confirm_exported`); a
+  stray/old DELETE is 400; a non-archived DELETE is 409. Revoke still keeps the data.
 - **Subject data-collection window** — each subject has an editable `participant_id` ("Study ID",
   distinct from the `study_id` FK) and an optional inclusive `collection_start`/`collection_end`
   (subject-local days, either bound nullable). When set, pulls are **hard-clamped** to it — enforced

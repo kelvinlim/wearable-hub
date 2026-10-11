@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState, useCallback } from "react";
 import {
   Plus, Trash2, Lock, Pencil, X, ChevronUp, ChevronDown,
   BatteryFull, BatteryWarning, AlertTriangle, Download,
+  Archive, ArchiveRestore,
 } from "lucide-react";
 import { api } from "../api";
 import { providerLabel, download, dailyCsv, pointsCsv } from "../lib";
@@ -123,7 +124,7 @@ function LatestCell({ s }) {
   return <span className={"whitespace-nowrap text-xs " + (s.data_stale ? "text-red-600" : "text-gray-500")}>{rel}</span>;
 }
 
-export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", canAdmin, guard }) {
+export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", canAdmin, isSuper, guard }) {
   const { hidePhi } = usePhiPrivacy();
   const [subjects, setSubjects] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -131,7 +132,9 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
   const [label, setLabel] = useState("");
   const [pid, setPid] = useState("");
   const [editing, setEditing] = useState(null); // subject being edited, or null
+  const [archiving, setArchiving] = useState(null); // subject in the archive-confirm modal, or null
   const [deleting, setDeleting] = useState(null); // subject in the delete-confirm modal, or null
+  const [showArchived, setShowArchived] = useState(false);
   const [sort, setSort] = useState({ key: "linked", dir: "desc" }); // linked-first by default
 
   const onSort = (k) =>
@@ -150,12 +153,12 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
   const load = useCallback(() => {
     if (studyId != null)
       guard(async () => {
-        const list = await api.listSubjects(studyId);
+        const list = await api.listSubjects(studyId, showArchived);
         setSubjects(list);
-        // Keep the open detail panel in sync after add-device / revoke / edit.
+        // Keep the open detail panel in sync after add-device / revoke / edit / archive.
         setSelected((sel) => (sel ? list.find((x) => x.id === sel.id) || null : null));
       });
-  }, [studyId, guard]);
+  }, [studyId, showArchived, guard]);
   useEffect(() => {
     setSelected(null);
     setSubjects([]);
@@ -174,11 +177,21 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
       <Card className="overflow-hidden">
         <div className="flex items-center justify-between gap-3 border-b border-gray-100 p-4 dark:border-neutral-800">
           <h3 className="font-display text-base font-semibold text-maroon dark:text-gold">Subjects</h3>
-          {canAdmin && (
-            <Button onClick={() => setAdding((a) => !a)}>
-              <Plus className="h-4 w-4" /> Add subject
-            </Button>
-          )}
+          <div className="flex items-center gap-3">
+            <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-gray-600 dark:text-neutral-300">
+              <input
+                type="checkbox"
+                checked={showArchived}
+                onChange={(e) => setShowArchived(e.target.checked)}
+              />
+              Show archived
+            </label>
+            {canAdmin && (
+              <Button onClick={() => setAdding((a) => !a)}>
+                <Plus className="h-4 w-4" /> Add subject
+              </Button>
+            )}
+          </div>
         </div>
 
         {adding && canAdmin && (
@@ -231,7 +244,8 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
                     onClick={() => setSelected(s)}
                     className={
                       "cursor-pointer border-b border-gray-50 transition-colors hover:bg-gray-50 dark:border-neutral-800/60 dark:hover:bg-neutral-800/50 " +
-                      (selected?.id === s.id ? "bg-maroon/5 dark:bg-maroon/20" : "")
+                      (selected?.id === s.id ? "bg-maroon/5 dark:bg-maroon/20 " : "") +
+                      (s.archived ? "opacity-70 " : "")
                     }
                   >
                     <Td><DevicesCell s={s} studyProvider={studyProvider} canAdmin={canAdmin} guard={guard} onChanged={load} /></Td>
@@ -241,7 +255,12 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
                     <Td><WeekDataCell s={s} /></Td>
                     <Td><LatestCell s={s} /></Td>
                     <Td className="whitespace-nowrap text-xs text-gray-500">{win || <span className="text-gray-300">—</span>}</Td>
-                    <Td className="text-gray-500">{s.status}</Td>
+                    <Td className="text-gray-500">
+                      <span className="inline-flex flex-wrap items-center gap-1.5">
+                        {s.archived && <Badge tone="maroon">Archived</Badge>}
+                        <span>{s.status}</span>
+                      </span>
+                    </Td>
                     <Td>{s.registered ? <Badge tone="green">linked</Badge> : <Badge>no</Badge>}</Td>
                     {canAdmin && (
                       <Td className="text-right" onClick={(e) => e.stopPropagation()}>
@@ -253,17 +272,41 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
                           >
                             <Pencil className="h-4 w-4" />
                           </button>
-                          {!s.registered ? (
+                          {s.archived ? (
+                            <>
+                              <button
+                                title="Restore this participant to the active list"
+                                onClick={() => {
+                                  guard(async () => {
+                                    await api.unarchiveSubject(s.id);
+                                    load();
+                                  });
+                                }}
+                                className="text-gray-400 hover:text-maroon dark:hover:text-gold"
+                              >
+                                <ArchiveRestore className="h-4 w-4" />
+                              </button>
+                              {isSuper && (
+                                <button
+                                  title="Permanently delete (superuser — extra confirmation required)"
+                                  onClick={() => setDeleting(s)}
+                                  className="text-gray-400 hover:text-red-600"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
+                              )}
+                            </>
+                          ) : !s.registered ? (
                             <button
-                              title="Delete subject (permanent — extra confirmation required)"
-                              onClick={() => setDeleting(s)}
-                              className="text-gray-400 hover:text-red-600"
+                              title="Archive this participant (hides from the default list; reversible)"
+                              onClick={() => setArchiving(s)}
+                              className="text-gray-400 hover:text-maroon dark:hover:text-gold"
                             >
-                              <Trash2 className="h-4 w-4" />
+                              <Archive className="h-4 w-4" />
                             </button>
                           ) : (
                             <span
-                              title="Linked — revoke this subject's access before it can be deleted"
+                              title="Linked — revoke this subject's access before it can be archived"
                               className="inline-flex cursor-help text-gray-300 dark:text-neutral-600"
                             >
                               <Lock className="h-4 w-4" />
@@ -276,7 +319,15 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
                 );
               })}
               {subjects.length === 0 && (
-                <tr><td colSpan={canAdmin ? 10 : 9}><Empty>No subjects yet.</Empty></td></tr>
+                <tr>
+                  <td colSpan={canAdmin ? 10 : 9}>
+                    <Empty>
+                      {showArchived
+                        ? "No subjects yet."
+                        : "No active subjects. Turn on Show archived to see finished participants."}
+                    </Empty>
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
@@ -298,6 +349,20 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
         />
       )}
 
+      {archiving && (
+        <ArchiveSubjectModal
+          subject={archiving}
+          hidePhi={hidePhi}
+          guard={guard}
+          onClose={() => setArchiving(null)}
+          onArchived={() => {
+            if (selected?.id === archiving.id && !showArchived) setSelected(null);
+            setArchiving(null);
+            load();
+          }}
+        />
+      )}
+
       {deleting && (
         <DeleteSubjectModal
           subject={deleting}
@@ -311,6 +376,59 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
           }}
         />
       )}
+    </div>
+  );
+}
+
+function ArchiveSubjectModal({ subject, hidePhi, guard, onClose, onArchived }) {
+  const [busy, setBusy] = useState(false);
+  const name = subjectDisplayName(subject, hidePhi);
+
+  const doArchive = () =>
+    guard(async () => {
+      setBusy(true);
+      try {
+        await api.archiveSubject(subject.id);
+        onArchived();
+      } finally {
+        setBusy(false);
+      }
+    });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <Card className="w-full max-w-md">
+        <div onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-between border-b border-gray-100 p-4 dark:border-neutral-800">
+            <h3 className="font-display text-base font-semibold text-maroon dark:text-gold">
+              Archive participant
+            </h3>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X className="h-4 w-4" /></button>
+          </div>
+          <div className="space-y-3 p-4 text-sm text-gray-600 dark:text-neutral-300">
+            <p>
+              Hide{" "}
+              <code className="rounded bg-gray-100 px-1.5 py-0.5 font-semibold dark:bg-neutral-800">{name}</code>
+              {" "}from the default Subjects list. Health data is kept and they can be restored later.
+            </p>
+            <p className="text-xs text-gray-400">
+              Archive is only allowed after the wearable is revoked. Permanent delete is a separate
+              superuser action on an archived row.
+            </p>
+            {subject.registered && (
+              <p className="text-sm text-red-600">
+                This subject is still linked. Revoke their wearable access first.
+              </p>
+            )}
+          </div>
+          <div className="flex justify-end gap-2 border-t border-gray-100 p-4 dark:border-neutral-800">
+            <Button variant="subtle" onClick={onClose}>Cancel</Button>
+            <Button onClick={doArchive} disabled={busy || subject.registered}>
+              {busy ? "Archiving…" : "Archive"}
+            </Button>
+          </div>
+        </div>
+      </Card>
     </div>
   );
 }
