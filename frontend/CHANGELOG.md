@@ -6,6 +6,7 @@ milestone progress rather than released versions.
 
 ## [0.9.1] — 2026-11-05
 
+<<<<<<< HEAD
 ### Added
 
 - **Rename a study after creation.** Study admins and superusers can change `studies.name`
@@ -13,6 +14,18 @@ milestone progress rather than released versions.
   rejected with 400). The Studies settings card adds a Study name field next to PI / IRB —
   same blur-to-save as those fields. Creating a study is still superuser-only; plain members
   remain read-only (403).
+=======
+### Fixed
+
+- **Unauthorized Google sign-in shows a readable page.** Researchers who are not yet
+  on Research staff (or a study membership) were landing on `/auth/callback` and seeing
+  raw JSON `{"detail":"This Google account is not authorized"}`. The callback now
+  returns a LoginView-styled HTML page: short title, plain language that this Google
+  account is not set up for Wearable Hub yet, a prompt to contact the study PI/admin,
+  the email Google returned (the signer's own), and a **Back to sign in** button.
+  Clients that send `Accept: application/json` still get the same `detail`. Authorized
+  sign-in is unchanged.
+>>>>>>> da62987 (Show a readable page when Google sign-in is not authorized)
 
 ## [0.9.0] — 2026-10-11
 
