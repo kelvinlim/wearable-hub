@@ -118,15 +118,25 @@ function SettingsCard({ study, canAdmin, isSuper, credSets = [], guard, onChange
   const [to, setTo] = useState("");
   const [fmt, setFmt] = useState("json");
   const [busy, setBusy] = useState(false);
+  const [studyName, setStudyName] = useState(study.name || "");
   const [pi, setPi] = useState(study.pi_name || "");
   const [irb, setIrb] = useState(study.irb_approval_number || "");
   useEffect(() => {
+    setStudyName(study.name || "");
     setPi(study.pi_name || "");
     setIrb(study.irb_approval_number || "");
-  }, [study.id, study.pi_name, study.irb_approval_number]);
+  }, [study.id, study.name, study.pi_name, study.irb_approval_number]);
   const saveField = (field, value, current) => {
     if ((current || "") !== value)
       guard(async () => { await api.updateStudy(study.id, { [field]: value }); onChanged(); });
+  };
+  const saveName = () => {
+    const trimmed = studyName.trim();
+    if (!trimmed) {
+      setStudyName(study.name || "");
+      return;
+    }
+    saveField("name", trimmed, study.name);
   };
 
   const runExport = () =>
@@ -172,15 +182,21 @@ function SettingsCard({ study, canAdmin, isSuper, credSets = [], guard, onChange
       )}
 
       {canAdmin && (
-        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="mb-4 space-y-3">
           <label className="text-sm">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-400">PI name</span>
-            <Input value={pi} onChange={(e) => setPi(e.target.value)} onBlur={() => saveField("pi_name", pi, study.pi_name)} placeholder="Principal investigator" />
+            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-400">Study name</span>
+            <Input value={studyName} onChange={(e) => setStudyName(e.target.value)} onBlur={saveName} placeholder="Study name" />
           </label>
-          <label className="text-sm">
-            <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-400">IRB approval #</span>
-            <Input value={irb} onChange={(e) => setIrb(e.target.value)} onBlur={() => saveField("irb_approval_number", irb, study.irb_approval_number)} placeholder="e.g. STUDY00026668" />
-          </label>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <label className="text-sm">
+              <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-400">PI name</span>
+              <Input value={pi} onChange={(e) => setPi(e.target.value)} onBlur={() => saveField("pi_name", pi, study.pi_name)} placeholder="Principal investigator" />
+            </label>
+            <label className="text-sm">
+              <span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-400">IRB approval #</span>
+              <Input value={irb} onChange={(e) => setIrb(e.target.value)} onBlur={() => saveField("irb_approval_number", irb, study.irb_approval_number)} placeholder="e.g. STUDY00026668" />
+            </label>
+          </div>
         </div>
       )}
 

@@ -33,6 +33,7 @@ class StudyOut(BaseModel):
 
 
 class StudyUpdate(BaseModel):
+    name: str | None = None  # optional rename; non-empty (after trim) when provided
     ingest_intraday_hr: bool | None = None
     ingest_intraday_hrv: bool | None = None
     ingest_intraday_spo2: bool | None = None
