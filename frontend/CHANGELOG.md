@@ -4,6 +4,16 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
+## [0.9.1] — 2026-11-05
+
+### Added
+
+- **Rename a study after creation.** Study admins and superusers can change `studies.name`
+  via `PATCH /admin/studies/{id}` (`StudyUpdate.name`, optional; trimmed; empty / whitespace
+  rejected with 400). The Studies settings card adds a Study name field next to PI / IRB —
+  same blur-to-save as those fields. Creating a study is still superuser-only; plain members
+  remain read-only (403).
+
 ## [0.9.0] — 2026-10-11
 
 ### Added

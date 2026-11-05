@@ -150,12 +150,17 @@ def update_study(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Study:
-    """Update study settings (e.g. opt in to intraday heart-rate). Study admin or superuser.
+    """Update study settings (name, PI/IRB, intraday opt-ins). Study admin or superuser.
     `provider` is intentionally not updatable here — it's fixed at creation (StudyUpdate omits it)."""
     study = db.get(Study, study_id)
     if study is None:
         raise HTTPException(status_code=404, detail="Study not found")
     assert_study_admin(db, user, study_id)
+    if payload.name is not None:
+        name = payload.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="name must not be empty")
+        study.name = name
     if payload.ingest_intraday_hr is not None:
         study.ingest_intraday_hr = payload.ingest_intraday_hr
     if payload.ingest_intraday_hrv is not None:
