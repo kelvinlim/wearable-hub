@@ -1,5 +1,12 @@
 # Garmin integration — plan
 
+> **Status.** The OAuth 1.0a + PUSH design below is what shipped (v0.3.x).
+> Garmin retires OAuth 1 on **2026-12-31**. Do not start a new OAuth1 feature
+> on this path — see
+> [garmin-oauth2-migration-plan.md](garmin-oauth2-migration-plan.md) for the
+> OAuth 2.0 + PKCE cutover (docs-only until implementation). Portal URLs:
+> [garmin-portal-registration.md](garmin-portal-registration.md).
+
 ## Context
 
 The hub was built "one app, per-provider OAuth modules" (CLAUDE.md). Fitbit-via-Google-Health is
