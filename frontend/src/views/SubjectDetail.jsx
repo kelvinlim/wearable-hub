@@ -8,6 +8,7 @@ import {
 } from "../lib";
 import { usePhiPrivacy } from "../phiPrivacy";
 import { subjectDisplayName, subjectExportBasename } from "../utils/phi";
+import { EXPORT_OPEN_KEY, readStoredFlag, writeStoredFlag } from "../utils/subjects";
 
 // Pull + consolidate is a synchronous server-side pull; a long range can exceed the gateway
 // timeout, so we send it in windows of this many days each.
@@ -32,6 +33,9 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
   const [exFrom, setExFrom] = useState("");
   const [exTo, setExTo] = useState("");
   const [exFmt, setExFmt] = useState("json");
+  // Default expanded when unset; same "1"/"0" localStorage style as Hide PHI / dark mode.
+  const [exportOpen, setExportOpen] = useState(() => readStoredFlag(EXPORT_OPEN_KEY, true));
+  useEffect(() => { writeStoredFlag(EXPORT_OPEN_KEY, exportOpen); }, [exportOpen]);
 
   const load = useCallback(() => guard(async () => setDaily(await api.daily(subject.id))), [guard, subject.id]);
   useEffect(() => { load(); }, [load]);
@@ -167,22 +171,34 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
         )}
       </div>
 
-      {/* Export + admin actions */}
+      {/* Export (collapsible) + admin actions. Backfill stays visible when Export is folded. */}
       <div className="flex flex-col gap-3 border-b border-gray-100 p-4 dark:border-neutral-800">
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Export</span>
-          <input type="date" value={exFrom} onChange={(e) => setExFrom(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800" />
-          <span className="text-gray-400">→</span>
-          <input type="date" value={exTo} onChange={(e) => setExTo(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800" />
-          <Select value={exFmt} onChange={(e) => setExFmt(e.target.value)} className="py-1">
-            <option value="json">JSON</option>
-            <option value="csv-daily">CSV — daily</option>
-            <option value="csv-points">CSV — points</option>
-          </Select>
-          <Button variant="ghost" onClick={doExport}><Download className="h-4 w-4" /> Download</Button>
-          <span className="text-xs text-gray-400">(blank = all)</span>
-          {subject.archived && (
-            <span className="text-xs text-gray-400">Archived — export still works; pulls and backfill are off.</span>
+          <button
+            type="button"
+            aria-expanded={exportOpen}
+            onClick={() => setExportOpen((o) => !o)}
+            className="inline-flex items-center gap-0.5 text-xs font-semibold uppercase tracking-wide text-gray-400 hover:text-gray-600 dark:hover:text-neutral-200"
+          >
+            {exportOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+            Export
+          </button>
+          {exportOpen && (
+            <>
+              <input type="date" value={exFrom} onChange={(e) => setExFrom(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800" />
+              <span className="text-gray-400">→</span>
+              <input type="date" value={exTo} onChange={(e) => setExTo(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800" />
+              <Select value={exFmt} onChange={(e) => setExFmt(e.target.value)} className="py-1">
+                <option value="json">JSON</option>
+                <option value="csv-daily">CSV — daily</option>
+                <option value="csv-points">CSV — points</option>
+              </Select>
+              <Button variant="ghost" onClick={doExport}><Download className="h-4 w-4" /> Download</Button>
+              <span className="text-xs text-gray-400">(blank = all)</span>
+              {subject.archived && (
+                <span className="text-xs text-gray-400">Archived — export still works; pulls and backfill are off.</span>
+              )}
+            </>
           )}
         </div>
         {canAdmin && !subject.archived && (
