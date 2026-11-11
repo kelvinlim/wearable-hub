@@ -1,7 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
-  EXPORT_OPEN_KEY,
   SHOW_ARCHIVED_KEY,
   SHOW_REGISTERED_KEY,
   filterSubjectList,
@@ -45,11 +44,10 @@ describe("filterSubjectList (Show registered)", () => {
   });
 });
 
-describe("Subjects / Export localStorage prefs", () => {
+describe("Subjects list localStorage prefs", () => {
   it("uses dedicated wh-* keys (same 1/0 encoding as Hide PHI and dark mode)", () => {
     assert.equal(SHOW_REGISTERED_KEY, "wh-show-registered");
     assert.equal(SHOW_ARCHIVED_KEY, "wh-show-archived");
-    assert.equal(EXPORT_OPEN_KEY, "wh-export-open");
   });
 
   it("defaults Show registered and Show archived off when unset", () => {
@@ -58,18 +56,11 @@ describe("Subjects / Export localStorage prefs", () => {
     assert.equal(readStoredFlag(SHOW_ARCHIVED_KEY, false, store), false);
   });
 
-  it("defaults Export expanded when unset", () => {
-    const store = memoryStore();
-    assert.equal(readStoredFlag(EXPORT_OPEN_KEY, true, store), true);
-  });
-
   it("round-trips saved choices", () => {
     const store = memoryStore();
     writeStoredFlag(SHOW_REGISTERED_KEY, true, store);
     writeStoredFlag(SHOW_ARCHIVED_KEY, true, store);
-    writeStoredFlag(EXPORT_OPEN_KEY, false, store);
     assert.equal(readStoredFlag(SHOW_REGISTERED_KEY, false, store), true);
     assert.equal(readStoredFlag(SHOW_ARCHIVED_KEY, false, store), true);
-    assert.equal(readStoredFlag(EXPORT_OPEN_KEY, true, store), false);
   });
 });

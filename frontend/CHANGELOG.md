@@ -4,6 +4,20 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
+## [0.9.4] — 2026-11-11
+
+### Changed
+
+- **Subject detail card is quieter by default.** Export and Backfill / Pull + consolidate
+  sit in one **Data management** section; **Paired devices** is its own section. Both use
+  the same chevron disclosure as day rows, default **collapsed**, and persist in
+  `localStorage` (`wh-data-management-open`, `wh-paired-devices-open`; `"1"`/`"0"`, closed
+  when unset). The subject header (id, device chip, linked/revoke, collection-window badge)
+  stays always visible. A collapsed Data management header shows a compact reminder such as
+  `Backfill 05/01/2026 → 11/11/2026` (export dates if backfill is hidden; omitted if there
+  is nothing useful). Opening Data management shows the full Export row and Backfill
+  together — the inner Export-only toggle from 0.9.3 (`wh-export-open`) is gone.
+
 ## [0.9.3] — 2026-11-11
 
 ### Added

@@ -10,9 +10,8 @@ Both on is an intersection of the two.
 // (`wh-view`, `wh-study`, `wh-dark`).
 export const SHOW_REGISTERED_KEY = "wh-show-registered";
 export const SHOW_ARCHIVED_KEY = "wh-show-archived";
-export const EXPORT_OPEN_KEY = "wh-export-open";
 
-/** Read a "1"/"0" flag. Missing key → `defaultOn` (Show registered/archived off; Export open). */
+/** Read a "1"/"0" flag. Missing key → `defaultOn` (Show registered/archived off). */
 export function readStoredFlag(key, defaultOn = false, store = globalThis.localStorage) {
   if (!store) return defaultOn;
   const v = store.getItem(key);
