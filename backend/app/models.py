@@ -367,7 +367,8 @@ class PairedDevice(Base):
     service, scope `…/googlehealth.settings.readonly`) — there is no dataType / webhook for it.
     Battery level/status is a "now" value, so the snapshot is refreshed only when consolidating
     a recent day (see `consolidation.refresh_paired_devices`). `device_name` is Google's resource
-    name (e.g. `users/me/pairedDevices/123`) and keys the upsert.
+    name (e.g. `users/me/pairedDevices/123`) and keys the upsert; rows Google no longer reports
+    as paired are deleted on that refresh so the panel matches the current pairing.
     """
 
     __tablename__ = "paired_devices"

@@ -4,17 +4,33 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
-## [0.9.1] — 2026-11-05
+## [0.9.3] — 2026-11-11
 
-<<<<<<< HEAD
 ### Added
 
-- **Rename a study after creation.** Study admins and superusers can change `studies.name`
-  via `PATCH /admin/studies/{id}` (`StudyUpdate.name`, optional; trimmed; empty / whitespace
-  rejected with 400). The Studies settings card adds a Study name field next to PI / IRB —
-  same blur-to-save as those fields. Creating a study is still superuser-only; plain members
-  remain read-only (403).
-=======
+- **Show registered on the Subjects list.** Next to **Show archived**, a matching checkbox
+  filters the table to currently linked subjects (the green **linked** badge). Default off
+  keeps today's list (all active subjects; archived only when **Show archived** is on). Both
+  on is an intersection. Filter is client-side on the existing `registered` flag.
+  **Show registered** and **Show archived** persist in `localStorage` (`wh-show-registered`,
+  `wh-show-archived`) so in-app navigation and reloads keep the filters.
+
+- **Collapsible Export on the subject detail card.** The EXPORT row (date range, format,
+  Download) folds away behind the EXPORT label so it is out of the way when not needed.
+  Default expanded; Backfill / Pull + consolidate stay visible. Open/closed is stored in
+  `localStorage` (`wh-export-open`) like Hide PHI / dark mode / the Subjects filters.
+
+### Fixed
+
+- **Paired devices panel shows the current pairing, not historical snapshots.**
+  `refresh_paired_devices` (run when consolidating a recent day) now replaces the stored
+  set with whatever Google returns from `GET /users/me/pairedDevices`, deleting rows for
+  unpaired / previously paired trackers. A currently paired tracker and scale both still
+  appear. A failed Google list does not prune. Existing leftover rows disappear on the
+  next successful refresh (e.g. Pull + consolidate of a recent day).
+
+## [0.9.2] — 2026-11-05
+
 ### Fixed
 
 - **Unauthorized Google sign-in shows a readable page.** Researchers who are not yet
@@ -25,7 +41,16 @@ milestone progress rather than released versions.
   the email Google returned (the signer's own), and a **Back to sign in** button.
   Clients that send `Accept: application/json` still get the same `detail`. Authorized
   sign-in is unchanged.
->>>>>>> da62987 (Show a readable page when Google sign-in is not authorized)
+
+## [0.9.1] — 2026-11-05
+
+### Added
+
+- **Rename a study after creation.** Study admins and superusers can change `studies.name`
+  via `PATCH /admin/studies/{id}` (`StudyUpdate.name`, optional; trimmed; empty / whitespace
+  rejected with 400). The Studies settings card adds a Study name field next to PI / IRB —
+  same blur-to-save as those fields. Creating a study is still superuser-only; plain members
+  remain read-only (403).
 
 ## [0.9.0] — 2026-10-11
 

@@ -667,14 +667,29 @@ def _upsert_paired_device(db: Session, account_id: int, dev: dict) -> None:
 
 
 def refresh_paired_devices(db: Session, account: ProviderAccount, token: str) -> int:
-    """Pull + upsert the account's paired-device snapshots. Returns the count seen.
+    """Replace the account's paired-device snapshots with what Google currently reports.
 
-    Battery/sync are "now" values, so callers only refresh when consolidating a recent day.
-    Fault-isolated by the caller; the settings.readonly scope must be on the grant."""
+    Upserts every device from GET /users/me/pairedDevices, then deletes stored rows whose
+    resource name is no longer in that response (unpaired / replaced trackers or scales).
+    A tracker and a scale that are both currently paired both stay. Returns the count
+    Google returned. Battery/sync are "now" values, so callers only refresh when
+    consolidating a recent day. Fault-isolated by the caller; the settings.readonly
+    scope must be on the grant. A failed list (raised by the Google call) must not
+    prune — the caller catches HTTP errors before this returns."""
     devices = fitbit_gh.list_paired_devices(token)
+    seen: set[str] = set()
     for dev in devices:
-        if isinstance(dev, dict):
-            _upsert_paired_device(db, account.id, dev)
+        if not isinstance(dev, dict):
+            continue
+        name = dev.get("name") or dev.get("macAddress")
+        if name:
+            seen.add(name)
+        _upsert_paired_device(db, account.id, dev)
+    stmt = delete(PairedDevice).where(PairedDevice.provider_account_id == account.id)
+    if seen:
+        stmt = stmt.where(PairedDevice.device_name.notin_(seen))
+    db.execute(stmt)
+    db.flush()
     return len(devices)
 
 

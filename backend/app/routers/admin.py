@@ -1290,10 +1290,11 @@ def _devices_for_account(db: Session, account_id: int) -> list[dict]:
 def list_devices(
     subject_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)
 ) -> list[dict]:
-    """A subject's paired devices (latest snapshot: battery, last sync, model). Study view.
+    """A subject's currently paired devices (latest snapshot: battery, last sync, model).
 
-    Snapshots are refreshed during consolidation of a recent day; battery/sync reflect the last
-    such pull (`updated_at`). Empty if the subject's grant lacks the settings.readonly scope."""
+    Snapshots are replaced during consolidation of a recent day with whatever Google currently
+    reports as paired; battery/sync reflect the last such pull (`updated_at`). Empty if the
+    subject's grant lacks the settings.readonly scope."""
     assert_study_view(db, user, study_id_for_subject(db, subject_id))
     accounts = _subject_accounts(db, subject_id)
     out: list[dict] = []

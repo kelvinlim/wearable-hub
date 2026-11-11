@@ -11,6 +11,10 @@ import {
   maskParticipantId, maskSubjectLabel, subjectDisplayName,
   subjectDeletePromptId, typedDeleteConfirmationMatches, subjectExportBasename,
 } from "../utils/phi";
+import {
+  filterSubjectList, readStoredFlag, writeStoredFlag,
+  SHOW_ARCHIVED_KEY, SHOW_REGISTERED_KEY,
+} from "../utils/subjects";
 import { Card, Button, Badge, Input, Th, Td, Empty, Field } from "../ui";
 import SubjectDetail from "./SubjectDetail";
 
@@ -134,7 +138,8 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
   const [editing, setEditing] = useState(null); // subject being edited, or null
   const [archiving, setArchiving] = useState(null); // subject in the archive-confirm modal, or null
   const [deleting, setDeleting] = useState(null); // subject in the delete-confirm modal, or null
-  const [showArchived, setShowArchived] = useState(false);
+  const [showArchived, setShowArchived] = useState(() => readStoredFlag(SHOW_ARCHIVED_KEY, false));
+  const [showRegistered, setShowRegistered] = useState(() => readStoredFlag(SHOW_REGISTERED_KEY, false));
   const [sort, setSort] = useState({ key: "linked", dir: "desc" }); // linked-first by default
 
   const onSort = (k) =>
@@ -142,13 +147,14 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
 
   const sorted = useMemo(() => {
     const f = SORTERS[sort.key];
-    return [...subjects].sort((a, b) => {
+    const list = filterSubjectList(subjects, { showRegistered });
+    return [...list].sort((a, b) => {
       const av = f(a), bv = f(b);
       let c = av < bv ? -1 : av > bv ? 1 : 0;
       if (c === 0) c = a.id - b.id;
       return sort.dir === "asc" ? c : -c;
     });
-  }, [subjects, sort]);
+  }, [subjects, sort, showRegistered]);
 
   const load = useCallback(() => {
     if (studyId != null)
@@ -159,11 +165,17 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
         setSelected((sel) => (sel ? list.find((x) => x.id === sel.id) || null : null));
       });
   }, [studyId, showArchived, guard]);
+  useEffect(() => { writeStoredFlag(SHOW_ARCHIVED_KEY, showArchived); }, [showArchived]);
+  useEffect(() => { writeStoredFlag(SHOW_REGISTERED_KEY, showRegistered); }, [showRegistered]);
   useEffect(() => {
     setSelected(null);
     setSubjects([]);
     load();
   }, [load]);
+  // Drop the open detail panel if the current row is hidden by Show registered.
+  useEffect(() => {
+    if (selected && showRegistered && !selected.registered) setSelected(null);
+  }, [showRegistered, selected]);
 
   if (studyId == null)
     return (
@@ -178,6 +190,14 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
         <div className="flex items-center justify-between gap-3 border-b border-gray-100 p-4 dark:border-neutral-800">
           <h3 className="font-display text-base font-semibold text-maroon dark:text-gold">Subjects</h3>
           <div className="flex items-center gap-3">
+            <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-gray-600 dark:text-neutral-300">
+              <input
+                type="checkbox"
+                checked={showRegistered}
+                onChange={(e) => setShowRegistered(e.target.checked)}
+              />
+              Show registered
+            </label>
             <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-gray-600 dark:text-neutral-300">
               <input
                 type="checkbox"
@@ -318,13 +338,15 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
                   </tr>
                 );
               })}
-              {subjects.length === 0 && (
+              {sorted.length === 0 && (
                 <tr>
                   <td colSpan={canAdmin ? 10 : 9}>
                     <Empty>
-                      {showArchived
-                        ? "No subjects yet."
-                        : "No active subjects. Turn on Show archived to see finished participants."}
+                      {showRegistered
+                        ? "No linked subjects."
+                        : showArchived
+                          ? "No subjects yet."
+                          : "No active subjects. Turn on Show archived to see finished participants."}
                     </Empty>
                   </td>
                 </tr>
