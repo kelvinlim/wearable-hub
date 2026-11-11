@@ -8,7 +8,13 @@ import {
 } from "../lib";
 import { usePhiPrivacy } from "../phiPrivacy";
 import { subjectDisplayName, subjectExportBasename } from "../utils/phi";
-import { EXPORT_OPEN_KEY, readStoredFlag, writeStoredFlag } from "../utils/subjects";
+import { readStoredFlag, writeStoredFlag } from "../utils/subjects";
+import {
+  DATA_MANAGEMENT_OPEN_KEY,
+  PAIRED_DEVICES_OPEN_KEY,
+  dataManagementHint,
+  pairedDevicesHint,
+} from "../utils/subjectDetail";
 
 // Pull + consolidate is a synchronous server-side pull; a long range can exceed the gateway
 // timeout, so we send it in windows of this many days each.
@@ -33,9 +39,11 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
   const [exFrom, setExFrom] = useState("");
   const [exTo, setExTo] = useState("");
   const [exFmt, setExFmt] = useState("json");
-  // Default expanded when unset; same "1"/"0" localStorage style as Hide PHI / dark mode.
-  const [exportOpen, setExportOpen] = useState(() => readStoredFlag(EXPORT_OPEN_KEY, true));
-  useEffect(() => { writeStoredFlag(EXPORT_OPEN_KEY, exportOpen); }, [exportOpen]);
+  // Both default collapsed when unset; same "1"/"0" localStorage style as Hide PHI / dark mode.
+  const [dataMgmtOpen, setDataMgmtOpen] = useState(() => readStoredFlag(DATA_MANAGEMENT_OPEN_KEY, false));
+  const [pairedOpen, setPairedOpen] = useState(() => readStoredFlag(PAIRED_DEVICES_OPEN_KEY, false));
+  useEffect(() => { writeStoredFlag(DATA_MANAGEMENT_OPEN_KEY, dataMgmtOpen); }, [dataMgmtOpen]);
+  useEffect(() => { writeStoredFlag(PAIRED_DEVICES_OPEN_KEY, pairedOpen); }, [pairedOpen]);
 
   const load = useCallback(() => guard(async () => setDaily(await api.daily(subject.id))), [guard, subject.id]);
   useEffect(() => { load(); }, [load]);
@@ -171,81 +179,80 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
         )}
       </div>
 
-      {/* Export (collapsible) + admin actions. Backfill stays visible when Export is folded. */}
-      <div className="flex flex-col gap-3 border-b border-gray-100 p-4 dark:border-neutral-800">
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <button
-            type="button"
-            aria-expanded={exportOpen}
-            onClick={() => setExportOpen((o) => !o)}
-            className="inline-flex items-center gap-0.5 text-xs font-semibold uppercase tracking-wide text-gray-400 hover:text-gray-600 dark:hover:text-neutral-200"
-          >
-            {exportOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-            Export
-          </button>
-          {exportOpen && (
-            <>
-              <input type="date" value={exFrom} onChange={(e) => setExFrom(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800" />
-              <span className="text-gray-400">→</span>
-              <input type="date" value={exTo} onChange={(e) => setExTo(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800" />
-              <Select value={exFmt} onChange={(e) => setExFmt(e.target.value)} className="py-1">
-                <option value="json">JSON</option>
-                <option value="csv-daily">CSV — daily</option>
-                <option value="csv-points">CSV — points</option>
-              </Select>
-              <Button variant="ghost" onClick={doExport}><Download className="h-4 w-4" /> Download</Button>
-              <span className="text-xs text-gray-400">(blank = all)</span>
-              {subject.archived && (
-                <span className="text-xs text-gray-400">Archived — export still works; pulls and backfill are off.</span>
-              )}
-            </>
-          )}
-        </div>
-        {canAdmin && !subject.archived && (
-          <div className="flex w-full flex-wrap items-center gap-2 text-sm">
-            <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Backfill</span>
-            <input type="date" value={start} onChange={(e) => setStart(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800" />
+      {/* Data management: Export + Backfill behind one disclosure. Header chips stay above. */}
+      <CollapsibleSection
+        title="Data management"
+        open={dataMgmtOpen}
+        onToggle={() => setDataMgmtOpen((o) => !o)}
+        hint={dataManagementHint({
+          start, end, exFrom, exTo, showBackfill: canAdmin && !subject.archived,
+        })}
+      >
+        <div className="mt-3 flex flex-col gap-3">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Export</span>
+            <input type="date" value={exFrom} onChange={(e) => setExFrom(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800" />
             <span className="text-gray-400">→</span>
-            <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800" />
-            {hasPull && (
-              <Button
-                disabled={busy || !start || !end}
-                title={!start || !end ? "Pick both a start and end date" : "Fitbit/Oura: pull + consolidate"}
-                onClick={doConsolidate}
-              >
-                {busy ? "Pulling…" : "Pull + consolidate"}
-              </Button>
-            )}
-            {hasGarmin && (
-              <Button
-                variant={hasPull ? "ghost" : undefined}
-                disabled={busy || !start || !end}
-                title={!start || !end ? "Pick both a start and end date" : "Garmin: request a re-push (async)"}
-                onClick={doBackfill}
-              >
-                {busy ? "Requesting…" : "Request backfill"}
-              </Button>
-            )}
-            {hasGarmin && (
-              <Button
-                variant="ghost"
-                disabled={busy}
-                title="Re-derive metrics from already-stored Garmin data (no re-fetch) — use after enabling an intraday option"
-                onClick={doReprocess}
-              >
-                {busy ? "…" : "Reprocess stored"}
-              </Button>
-            )}
-            <span className="text-xs text-gray-400">(both required)</span>
-            <span className="text-xs text-gray-400">· revoke a device from its chip above</span>
-            {notice && (
-              <p className="basis-full text-xs text-emerald-600 dark:text-emerald-400">{notice}</p>
+            <input type="date" value={exTo} onChange={(e) => setExTo(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800" />
+            <Select value={exFmt} onChange={(e) => setExFmt(e.target.value)} className="py-1">
+              <option value="json">JSON</option>
+              <option value="csv-daily">CSV — daily</option>
+              <option value="csv-points">CSV — points</option>
+            </Select>
+            <Button variant="ghost" onClick={doExport}><Download className="h-4 w-4" /> Download</Button>
+            <span className="text-xs text-gray-400">(blank = all)</span>
+            {subject.archived && (
+              <span className="text-xs text-gray-400">Archived — export still works; pulls and backfill are off.</span>
             )}
           </div>
-        )}
-      </div>
+          {canAdmin && !subject.archived && (
+            <div className="flex w-full flex-wrap items-center gap-2 text-sm">
+              <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Backfill</span>
+              <input type="date" value={start} onChange={(e) => setStart(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800" />
+              <span className="text-gray-400">→</span>
+              <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} className="rounded-lg border border-gray-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-800" />
+              {hasPull && (
+                <Button
+                  disabled={busy || !start || !end}
+                  title={!start || !end ? "Pick both a start and end date" : "Fitbit/Oura: pull + consolidate"}
+                  onClick={doConsolidate}
+                >
+                  {busy ? "Pulling…" : "Pull + consolidate"}
+                </Button>
+              )}
+              {hasGarmin && (
+                <Button
+                  variant={hasPull ? "ghost" : undefined}
+                  disabled={busy || !start || !end}
+                  title={!start || !end ? "Pick both a start and end date" : "Garmin: request a re-push (async)"}
+                  onClick={doBackfill}
+                >
+                  {busy ? "Requesting…" : "Request backfill"}
+                </Button>
+              )}
+              {hasGarmin && (
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  title="Re-derive metrics from already-stored Garmin data (no re-fetch) — use after enabling an intraday option"
+                  onClick={doReprocess}
+                >
+                  {busy ? "…" : "Reprocess stored"}
+                </Button>
+              )}
+              <span className="text-xs text-gray-400">(both required)</span>
+              <span className="text-xs text-gray-400">· revoke a device from its chip above</span>
+              {notice && (
+                <p className="basis-full text-xs text-emerald-600 dark:text-emerald-400">{notice}</p>
+              )}
+            </div>
+          )}
+        </div>
+      </CollapsibleSection>
 
-      {devices.length > 0 && <DevicesPanel devices={devices} />}
+      {devices.length > 0 && (
+        <DevicesPanel devices={devices} open={pairedOpen} onToggle={() => setPairedOpen((o) => !o)} />
+      )}
 
       <div className="overflow-x-auto">
         <table className="w-full">
@@ -303,13 +310,38 @@ function cell(v) {
   return f == null ? <span className="text-gray-300 dark:text-neutral-600">—</span> : f;
 }
 
+// Same chevron + uppercase micro-label as day rows.
+function CollapsibleSection({ title, open, onToggle, hint, children }) {
+  return (
+    <div className="border-b border-gray-100 p-4 dark:border-neutral-800">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={onToggle}
+        className="flex w-full items-center gap-1.5 text-left text-xs font-semibold uppercase tracking-wide text-gray-400 hover:text-gray-600 dark:hover:text-neutral-200"
+      >
+        {open ? <ChevronDown className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0" />}
+        <span>{title}</span>
+        {!open && hint ? (
+          <span className="min-w-0 truncate font-normal normal-case tracking-normal">{hint}</span>
+        ) : null}
+      </button>
+      {open ? children : null}
+    </div>
+  );
+}
+
 // Battery status → tone for the level pill. Google returns High|Medium|Low|Empty.
 const BATT_TONE = { High: "green", Medium: "gold", Low: "red", Empty: "red" };
 
-function DevicesPanel({ devices }) {
+function DevicesPanel({ devices, open, onToggle }) {
   return (
-    <div className="border-b border-gray-100 p-4 dark:border-neutral-800">
-      <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">Paired devices</span>
+    <CollapsibleSection
+      title="Paired devices"
+      open={open}
+      onToggle={onToggle}
+      hint={pairedDevicesHint(devices)}
+    >
       <div className="mt-2 flex flex-wrap gap-3">
         {devices.map((d) => (
           <div key={d.device_name} className="min-w-[180px] rounded-lg border border-gray-200 p-3 text-sm dark:border-neutral-700">
@@ -332,7 +364,7 @@ function DevicesPanel({ devices }) {
           </div>
         ))}
       </div>
-    </div>
+    </CollapsibleSection>
   );
 }
 
