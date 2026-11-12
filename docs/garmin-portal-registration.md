@@ -69,6 +69,11 @@ pick whichever Garmin's branding-image validator accepts:
 - OAuth 1.0a + identity/deregister: `app/providers/garmin.py`.
 - Branding/privacy/home pages: `app/routers/public.py`.
 
+**OAuth 1 retires 2026-12-31.** The enroll/callback URL above stays the same
+under OAuth 2 (exact-match `redirect_uri`); only the handshake behind it
+changes. Implementation brief:
+[garmin-oauth2-migration-plan.md](garmin-oauth2-migration-plan.md).
+
 ## 5. Google (Fitbit) equivalents — for reference
 
 These coexist and stay at **root** (the verified Google Cloud Console app points there):
