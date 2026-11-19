@@ -2,6 +2,8 @@
 // (BASE_URL = "/wearable/" in prod, "/" in a plain build) so they survive the host-nginx
 // prefix strip; nginx/Vite proxy them to the backend (same-origin, no CORS).
 
+import { formatApiError } from "./utils/apiError";
+
 export const apiBase = (import.meta.env.BASE_URL || "/").replace(/\/$/, ""); // e.g. "/wearable"
 
 async function req(path, opts = {}) {
@@ -14,9 +16,9 @@ async function req(path, opts = {}) {
     try {
       detail = (await res.json()).detail;
     } catch {
-      detail = res.statusText;
+      detail = null;
     }
-    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+    throw new Error(formatApiError(detail, res.statusText));
   }
   if (res.status === 204) return null;
   return res.json();

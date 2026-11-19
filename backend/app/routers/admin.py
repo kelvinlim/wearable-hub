@@ -16,7 +16,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Re
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
-from app import consolidation, garmin_backfill, garmin_ingest, oura_ingest
+from app import consolidation, garmin_backfill, garmin_ingest, oura_ingest, pull_errors
 from app.accounts import revoke_account
 from app.config import get_settings
 from app.crypto import decrypt, encrypt
@@ -1069,7 +1069,13 @@ def consolidate_subject(
     user: User = Depends(get_current_user),
 ) -> dict:
     """On-demand: (re)build daily_health for a subject over [start, end] by pulling from the
-    provider. Used for backfilling history and verification. Idempotent per day. Study-admin."""
+    provider. Used for backfilling history and verification. Idempotent per day. Study-admin.
+
+    Unexpected exceptions abort the request with a structured `detail` (failed local date,
+    already-saved days in this request, classified reason, guidance, `error_id`). The full
+    traceback stays in server logs under that `error_id` — never tokens, upstream bodies, PHI,
+    or stack traces in the response. Returned per-day `status=error` (e.g. revoked grant) is
+    not an abort; those days are listed and the loop continues."""
     if end < start:
         raise HTTPException(status_code=400, detail="end must be >= start")
     if (end - start).days > 120:
@@ -1092,12 +1098,9 @@ def consolidate_subject(
     consolidate = (
         oura_ingest.consolidate_day if acct.provider == oura.NAME else consolidation.consolidate_day
     )
-    days = []
-    d = start
-    while d <= end:
-        state = consolidate(db, acct, d)
-        days.append({"date": d.isoformat(), "status": state.status, "detail": state.detail})
-        d += timedelta(days=1)
+    days = pull_errors.run_on_demand_range(
+        db, acct, start, end, consolidate, subject_id=subject_id
+    )
     return {"subject_id": subject_id, "provider_account_id": acct.id, "days": days}
 
 
