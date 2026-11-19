@@ -4,6 +4,22 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
+## [0.9.5] — 2026-11-19
+
+### Fixed
+
+- **On-demand Pull + consolidate no longer dies as a bare `Internal Server Error`.**
+  `POST /admin/subjects/{id}/consolidate` now classifies unexpected failures (provider
+  timeout / unreachable / HTTP, token refresh, database, anything else), logs the full
+  traceback under a short `error_id`, and returns a JSON `detail` with a safe reason, the
+  failed local date, days already saved in that request, guidance, and that `error_id`.
+  Tokens, upstream bodies, PHI, and stack traces stay out of the response. Unhandled
+  exceptions on other routes get the same `error_id` safety net.
+- **Subject-detail pull progress no longer looks active after a failure.** The in-panel
+  notice switches from “Pulling …” to “Stopped at {window} (i/n)” in red, with how many
+  windows actually finished, so a first-chunk failure (e.g. Oct 24–Nov 2 of a three-window
+  backfill) is honest about partial success. The toast uses the same safe API message + ref.
+
 ## [0.9.4] — 2026-11-11
 
 ### Changed
