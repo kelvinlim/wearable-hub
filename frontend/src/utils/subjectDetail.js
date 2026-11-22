@@ -8,6 +8,58 @@ and the Subjects-list filters. Both default closed when the key is unset.
 export const DATA_MANAGEMENT_OPEN_KEY = "wh-data-management-open";
 export const PAIRED_DEVICES_OPEN_KEY = "wh-paired-devices-open";
 
+/** Pull + consolidate is a synchronous server-side pull; a long range can exceed the
+ * gateway timeout, so the console sends it in windows of this many days each. */
+export const CHUNK_DAYS = 10;
+
+/** Add `n` days to a "yyyy-mm-dd" string in UTC (avoids local-timezone off-by-one). */
+export function addDays(iso, n) {
+  const d = new Date(iso + "T00:00:00Z");
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+/** Inclusive [start, end] split into ≤ `chunkDays`-day windows, in order. */
+export function chunkDateRange(start, end, chunkDays = CHUNK_DAYS) {
+  const windows = [];
+  if (!start || !end || end < start) return windows;
+  let a = start;
+  while (a <= end) {
+    let b = addDays(a, chunkDays - 1);
+    if (b > end) b = end;
+    windows.push({ start: a, end: b });
+    a = addDays(b, 1);
+  }
+  return windows;
+}
+
+export function pullProgressNotice(window, index, total) {
+  if (!window || total <= 1) return "";
+  return `Pulling ${window.start}…${window.end} (${index + 1}/${total})`;
+}
+
+/**
+ * In-panel status after a pull window fails. Must replace any "Pulling…" text so
+ * progress does not look active. `error` is the already-formatted API message.
+ */
+export function pullFailedNotice({
+  window, index, total, completedWindows = [], error = "",
+} = {}) {
+  if (!window) return error || "Pull failed.";
+  const chunk = `${window.start}…${window.end} (${index + 1}/${total})`;
+  const n = completedWindows.length;
+  let saved;
+  if (n === 0) {
+    saved = "No windows finished.";
+  } else if (n === 1) {
+    const w = completedWindows[0];
+    saved = `1 of ${total} windows finished (${w.start}…${w.end}).`;
+  } else {
+    saved = `${n} of ${total} windows finished.`;
+  }
+  return `Stopped at ${chunk}. ${saved}${error ? ` ${error}` : ""}`;
+}
+
 /** `yyyy-mm-dd` → `mm/dd/yyyy` for compact header hints. Empty / non-ISO → "". */
 export function formatIsoDateMdY(iso) {
   if (!iso) return "";

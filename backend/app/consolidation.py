@@ -20,11 +20,13 @@ no raw points — only the daily summary.
 """
 
 import logging
+import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
 import httpx
 from sqlalchemy import delete, select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -40,6 +42,7 @@ from app.models import (
     Subject,
 )
 from app.providers import fitbit_gh, gh_creds
+from app.pull_errors import is_lock_wait_error, safe_exc_summary
 
 log = logging.getLogger(__name__)
 _TIMEOUT = 30.0
@@ -419,21 +422,95 @@ def aggregate_sleep(points: list[dict]) -> dict:
 
 # --- consolidation --------------------------------------------------------------
 
-def _fresh_token(db: Session, account: ProviderAccount) -> str:
-    """Refresh + persist the account's access token. Raises GrantRevokedError if revoked.
+# Skip Google refresh while the stored access token is still usable. Refreshing on every
+# consolidate_day (the 0.9.4 behavior) issued an UPDATE of provider_accounts at the start of
+# each local day and left that exclusive row lock in the caller's transaction for the whole
+# Google pull — a lock-wait timeout on that flush aborts the request before any data is read.
+_REFRESH_MARGIN = timedelta(minutes=5)
+_TOKEN_LOCK_ATTEMPTS = 3
+_TOKEN_LOCK_SLEEP_SECONDS = 0.4
 
-    Refreshes against the credential set that ISSUED this token (pinned on the account), so it works
-    regardless of the study's current set. Runs on every trigger (nightly / webhook / on-demand)."""
+
+def _access_token_still_fresh(account: ProviderAccount) -> bool:
+    if not account.access_token or not account.token_expires_at:
+        return False
+    return account.token_expires_at > datetime.utcnow() + _REFRESH_MARGIN
+
+
+def _persist_refreshed_tokens(
+    db: Session,
+    account_id: int,
+    access_enc: str,
+    refresh_enc: str | None,
+    expires_at: datetime | None,
+) -> None:
+    """Commit token columns on a short-lived session bound to the same engine.
+
+    A separate connection (MariaDB queue pool) keeps the caller's uncommitted
+    consolidation rows out of this transaction, and releases the provider_accounts
+    exclusive lock as soon as the UPDATE commits — before provider HTTP. Retries
+    lock-wait / deadlock a few times. Logs class/errno only, never SQL params.
+    """
+    token_db = Session(bind=db.get_bind(), autoflush=False, expire_on_commit=True)
+    try:
+        last_exc: BaseException | None = None
+        for attempt in range(1, _TOKEN_LOCK_ATTEMPTS + 1):
+            try:
+                row = token_db.get(ProviderAccount, account_id)
+                if row is None:
+                    raise RuntimeError("provider account disappeared during token persist")
+                row.access_token = access_enc
+                if refresh_enc is not None:
+                    row.refresh_token = refresh_enc
+                row.token_expires_at = expires_at
+                token_db.commit()
+                return
+            except OperationalError as exc:
+                last_exc = exc
+                token_db.rollback()
+                if not is_lock_wait_error(exc) or attempt == _TOKEN_LOCK_ATTEMPTS:
+                    log.error(
+                        "token persist failed account_id=%s attempt=%s summary=%s",
+                        account_id,
+                        attempt,
+                        safe_exc_summary(exc),
+                    )
+                    raise
+                log.warning(
+                    "token persist lock wait account_id=%s attempt=%s/%s summary=%s",
+                    account_id,
+                    attempt,
+                    _TOKEN_LOCK_ATTEMPTS,
+                    safe_exc_summary(exc),
+                )
+                time.sleep(_TOKEN_LOCK_SLEEP_SECONDS * attempt)
+        if last_exc is not None:
+            raise last_exc
+    finally:
+        token_db.close()
+
+
+def _fresh_token(db: Session, account: ProviderAccount) -> str:
+    """Return a usable access token, refreshing only when expired / near expiry.
+
+    Google refresh tokens are typically reusable (unlike Oura), but the persist must still
+    *commit* on its own short session: a same-session `flush()` leaves an exclusive row lock
+    on `provider_accounts` for the rest of consolidate_day (minutes of provider I/O).
+    Refreshes against the credential set that ISSUED this token (pinned on the account).
+    Raises GrantRevokedError if revoked."""
+    if _access_token_still_fresh(account):
+        return decrypt(account.access_token)
     if not account.refresh_token:
         raise fitbit_gh.GrantRevokedError("no refresh token on record")
     creds = gh_creds.resolve_for_account(db, account)
     log.debug("refresh acct %s using creds source=%s", account.id, creds.source)
     res = fitbit_gh.refresh(creds, decrypt(account.refresh_token))
-    account.access_token = encrypt(res.access_token)
-    if res.refresh_token:
-        account.refresh_token = encrypt(res.refresh_token)
-    account.token_expires_at = res.expires_at
-    db.flush()
+    access_enc = encrypt(res.access_token)
+    refresh_enc = encrypt(res.refresh_token) if res.refresh_token else None
+    _persist_refreshed_tokens(db, account.id, access_enc, refresh_enc, res.expires_at)
+    # Caller identity map may still hold old ciphertext. Expire token columns so a later
+    # commit of this session cannot write stale values back over the short persist.
+    db.expire(account, ["access_token", "refresh_token", "token_expires_at", "updated_at"])
     return res.access_token
 
 

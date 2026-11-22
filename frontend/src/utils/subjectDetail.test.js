@@ -7,9 +7,14 @@ import { readStoredFlag, writeStoredFlag } from "./subjects.js";
 import {
   DATA_MANAGEMENT_OPEN_KEY,
   PAIRED_DEVICES_OPEN_KEY,
+  CHUNK_DAYS,
+  addDays,
+  chunkDateRange,
   dataManagementHint,
   formatIsoDateMdY,
   pairedDevicesHint,
+  pullFailedNotice,
+  pullProgressNotice,
 } from "./subjectDetail.js";
 
 function memoryStore(seed = {}) {
@@ -49,6 +54,14 @@ describe("subject detail section structure", () => {
     assert.equal(detailSrc.includes("EXPORT_OPEN_KEY"), false);
     assert.equal(detailSrc.includes("wh-export-open"), false);
     assert.equal(detailSrc.includes("exportOpen"), false);
+  });
+
+  it("rewrites the pull notice on failure instead of leaving Pulling…", () => {
+    assert.match(detailSrc, /pullFailedNotice/);
+    assert.match(detailSrc, /setNoticeTone\("error"\)/);
+    assert.match(detailSrc, /noticeTone === "error"/);
+    assert.match(detailSrc, /try \{ await load\(\); \} catch/);
+    assert.doesNotMatch(detailSrc, /const CHUNK_DAYS/);
   });
 
   it("defaults both new sections closed and persists with dedicated keys", () => {
@@ -143,6 +156,60 @@ describe("pairedDevicesHint", () => {
     assert.equal(
       pairedDevicesHint([{ device_version: "Charge 6" }, { device_version: "Aria Air" }]),
       "2 devices",
+    );
+  });
+});
+
+describe("chunkDateRange", () => {
+  it("matches the 0.9.4 console 10-day windows for Oct 24–Nov 19", () => {
+    assert.equal(CHUNK_DAYS, 10);
+    assert.deepEqual(chunkDateRange("2026-10-24", "2026-11-19"), [
+      { start: "2026-10-24", end: "2026-11-02" },
+      { start: "2026-11-03", end: "2026-11-12" },
+      { start: "2026-11-13", end: "2026-11-19" },
+    ]);
+  });
+
+  it("keeps a short range as one window and rejects inverted bounds", () => {
+    assert.deepEqual(chunkDateRange("2026-10-24", "2026-10-26"), [
+      { start: "2026-10-24", end: "2026-10-26" },
+    ]);
+    assert.deepEqual(chunkDateRange("2026-11-19", "2026-10-24"), []);
+    assert.deepEqual(chunkDateRange("", "2026-10-24"), []);
+  });
+
+  it("adds days in UTC so month boundaries do not shift", () => {
+    assert.equal(addDays("2026-10-24", 9), "2026-11-02");
+    assert.equal(addDays("2026-11-02", 1), "2026-11-03");
+  });
+});
+
+describe("pull notices", () => {
+  it("shows in-progress text only for multi-window pulls", () => {
+    const w = { start: "2026-10-24", end: "2026-11-02" };
+    assert.equal(pullProgressNotice(w, 0, 3), "Pulling 2026-10-24…2026-11-02 (1/3)");
+    assert.equal(pullProgressNotice(w, 0, 1), "");
+  });
+
+  it("replaces Pulling with a stopped notice and honest partial success", () => {
+    const failed = { start: "2026-10-24", end: "2026-11-02" };
+    assert.equal(
+      pullFailedNotice({
+        window: failed, index: 0, total: 3, completedWindows: [],
+        error: "Pull failed on 2026-10-24: The wearable provider did not respond in time. Ref abcd",
+      }),
+      "Stopped at 2026-10-24…2026-11-02 (1/3). No windows finished. "
+        + "Pull failed on 2026-10-24: The wearable provider did not respond in time. Ref abcd",
+    );
+    assert.equal(
+      pullFailedNotice({
+        window: { start: "2026-11-03", end: "2026-11-12" },
+        index: 1, total: 3,
+        completedWindows: [failed],
+        error: "Pull failed on 2026-11-05: A database constraint stopped saving pulled points. Ref eeee",
+      }),
+      "Stopped at 2026-11-03…2026-11-12 (2/3). 1 of 3 windows finished (2026-10-24…2026-11-02). "
+        + "Pull failed on 2026-11-05: A database constraint stopped saving pulled points. Ref eeee",
     );
   });
 });

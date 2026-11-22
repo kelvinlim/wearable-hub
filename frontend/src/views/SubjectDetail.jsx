@@ -12,19 +12,12 @@ import { readStoredFlag, writeStoredFlag } from "../utils/subjects";
 import {
   DATA_MANAGEMENT_OPEN_KEY,
   PAIRED_DEVICES_OPEN_KEY,
+  chunkDateRange,
   dataManagementHint,
   pairedDevicesHint,
+  pullFailedNotice,
+  pullProgressNotice,
 } from "../utils/subjectDetail";
-
-// Pull + consolidate is a synchronous server-side pull; a long range can exceed the gateway
-// timeout, so we send it in windows of this many days each.
-const CHUNK_DAYS = 10;
-// Add `n` days to a "yyyy-mm-dd" string in UTC (avoids local-timezone off-by-one).
-function addDays(iso, n) {
-  const d = new Date(iso + "T00:00:00Z");
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
-}
 
 export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
   const { hidePhi } = usePhiPrivacy();
@@ -36,6 +29,7 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
   const [end, setEnd] = useState(subject.collection_end || today());
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState("");
+  const [noticeTone, setNoticeTone] = useState("ok"); // progress | ok | error
   const [exFrom, setExFrom] = useState("");
   const [exTo, setExTo] = useState("");
   const [exFmt, setExFmt] = useState("json");
@@ -64,6 +58,7 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
     setOpenDay(null);
     setDayPts([]);
     setNotice("");
+    setNoticeTone("ok");
     setStart(subject.collection_start || today());
     setEnd(subject.collection_end || today());
   }, [subject.id, subject.collection_start, subject.collection_end]);
@@ -101,21 +96,29 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
       datesValid();
       setBusy(true);
       setNotice("");
+      setNoticeTone("progress");
+      const completed = [];
+      const windows = chunkDateRange(start, end);
       try {
-        const windows = [];
-        let a = start;
-        while (a <= end) {
-          let b = addDays(a, CHUNK_DAYS - 1);
-          if (b > end) b = end;
-          windows.push([a, b]);
-          a = addDays(b, 1);
-        }
         for (let i = 0; i < windows.length; i++) {
-          const [a2, b2] = windows[i];
-          if (windows.length > 1) setNotice(`Pulling ${a2}…${b2} (${i + 1}/${windows.length})`);
-          await api.consolidate(subject.id, a2, b2);
+          const w = windows[i];
+          if (windows.length > 1) setNotice(pullProgressNotice(w, i, windows.length));
+          try {
+            await api.consolidate(subject.id, w.start, w.end);
+          } catch (e) {
+            setNoticeTone("error");
+            setNotice(pullFailedNotice({
+              window: w, index: i, total: windows.length,
+              completedWindows: completed, error: e.message,
+            }));
+            // Days before the failed local date in this window may already be committed.
+            try { await load(); } catch { /* pull error is the one to surface */ }
+            throw e;
+          }
+          completed.push(w);
           await load(); // rows appear as each window lands; a later failure keeps earlier ones
         }
+        setNoticeTone("ok");
         setNotice(windows.length > 1 ? `Done — pulled ${windows.length} windows.` : "");
         await loadDevices();
       } finally { setBusy(false); }
@@ -125,6 +128,7 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
       datesValid();
       setBusy(true);
       setNotice("");
+      setNoticeTone("ok");
       try {
         const res = await api.backfill(subject.id, start, end);
         const types = res.types?.length ?? 0;
@@ -136,6 +140,7 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
     guard(async () => {
       setBusy(true);
       setNotice("");
+      setNoticeTone("ok");
       try {
         const res = await api.reprocess(subject.id);
         const summary = Object.entries(res.counts || {}).map(([k, v]) => `${k} ${v}`).join(", ");
@@ -243,7 +248,18 @@ export default function SubjectDetail({ subject, canAdmin, guard, onChanged }) {
               <span className="text-xs text-gray-400">(both required)</span>
               <span className="text-xs text-gray-400">· revoke a device from its chip above</span>
               {notice && (
-                <p className="basis-full text-xs text-emerald-600 dark:text-emerald-400">{notice}</p>
+                <p
+                  className={cn(
+                    "basis-full text-xs",
+                    noticeTone === "error"
+                      ? "text-red-700 dark:text-red-300"
+                      : noticeTone === "progress"
+                        ? "text-gray-600 dark:text-neutral-300"
+                        : "text-emerald-600 dark:text-emerald-400",
+                  )}
+                >
+                  {notice}
+                </p>
               )}
             </div>
           )}
