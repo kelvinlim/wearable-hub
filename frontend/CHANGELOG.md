@@ -8,6 +8,17 @@ milestone progress rather than released versions.
 
 ### Fixed
 
+- **Google Health token refresh no longer holds a `provider_accounts` row lock across the pull.**
+  `_fresh_token` was refreshing on every local day and only `flush()`ing the new access token
+  in the caller's transaction, so an exclusive lock sat on that row for the whole Google
+  read. A MySQL 1205 lock-wait timeout on that flush aborted on-demand consolidate before
+  any data was pulled. Refresh now runs only when the access token is expired or within
+  five minutes of expiry, and the new ciphertext is committed on a short-lived session
+  (with a few lock-wait retries). The caller's uncommitted daily rows are not committed
+  with the token. Lock-wait/deadlock is classified as `database_lock` (HTTP 503) with
+  retry-shortly guidance — not a re-link prompt. Logs record class/errno and traceback
+  frames, never SQL bound parameters.
+
 - **On-demand Pull + consolidate no longer dies as a bare `Internal Server Error`.**
   `POST /admin/subjects/{id}/consolidate` now classifies unexpected failures (provider
   timeout / unreachable / HTTP, token refresh, database, anything else), logs the full

@@ -11,11 +11,12 @@ from datetime import date
 from types import SimpleNamespace
 
 import httpx
+import pymysql
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -60,6 +61,26 @@ def test_classify_token_refresh_vs_data_http():
     assert reason == pull_errors.REASON_PROVIDER_HTTP
     assert status == 502
     assert "503" in msg
+
+
+def test_classify_lock_wait_omits_sql_params():
+    orig = pymysql.err.OperationalError(
+        1205, "Lock wait timeout exceeded; try restarting transaction"
+    )
+    exc = OperationalError(
+        "UPDATE provider_accounts SET access_token=%(access_token)s",
+        {"access_token": "SECRET-TOKEN-VALUE"},
+        orig,
+    )
+    reason, status, msg = pull_errors.classify_exception(exc)
+    assert reason == pull_errors.REASON_DB_LOCK
+    assert status == 503
+    assert "SECRET-TOKEN-VALUE" not in msg
+    assert "access_token" not in msg
+    assert "1205" not in msg  # errno stays in logs, not the researcher message
+    summary = pull_errors.safe_exc_summary(exc)
+    assert "errno=1205" in summary
+    assert "SECRET-TOKEN-VALUE" not in summary
 
 
 def test_classify_integrity_and_unexpected_omit_exc_text():
@@ -118,7 +139,7 @@ def test_run_on_demand_range_success_returns_per_day_status():
 
     days = pull_errors.run_on_demand_range(
         db=None, account=_Acct(), start=date(2026, 10, 24), end=date(2026, 10, 25),
-        consolidate_fn=ok, subject_id=62,
+        consolidate_fn=ok, subject_id=101,
     )
     assert [r["date"] for r in days] == ["2026-10-24", "2026-10-25"]
     assert all(r["status"] == "done" for r in days)
@@ -134,7 +155,7 @@ def test_run_on_demand_range_continues_after_returned_error_status():
 
     days = pull_errors.run_on_demand_range(
         db=None, account=_Acct(), start=date(2026, 10, 24), end=date(2026, 10, 25),
-        consolidate_fn=mixed, subject_id=62,
+        consolidate_fn=mixed, subject_id=101,
     )
     assert days[0]["status"] == "error"
     assert days[1]["status"] == "done"
@@ -146,7 +167,7 @@ def test_run_on_demand_range_raised_error_is_http_and_does_not_leak(caplog):
     def boom(db, acct, d):
         calls.append(d)
         if d == date(2026, 10, 25):
-            raise RuntimeError("Bearer ya29.secret TRACEBACK su-62@umn.edu")
+            raise RuntimeError("Bearer ya29.secret TRACEBACK participant@example.test")
         return SimpleNamespace(status="done", detail=None)
 
     class FakeDb:
@@ -157,7 +178,7 @@ def test_run_on_demand_range_raised_error_is_http_and_does_not_leak(caplog):
         pull_errors.run_on_demand_range(
             db=FakeDb(), account=_Acct(),
             start=date(2026, 10, 24), end=date(2026, 10, 26),
-            consolidate_fn=boom, subject_id=62,
+            consolidate_fn=boom, subject_id=101,
         )
     # Persist of ConsolidationState hits FakeDb without the ORM methods — that's
     # swallowed; the HTTPException is what the client sees.
@@ -170,7 +191,7 @@ def test_run_on_demand_range_raised_error_is_http_and_does_not_leak(caplog):
     body = json.dumps(detail)
     assert "ya29" not in body
     assert "TRACEBACK" not in body
-    assert "umn.edu" not in body
+    assert "example.test" not in body
     assert "Bearer" not in body
     assert calls == [date(2026, 10, 24), date(2026, 10, 25)]  # stopped, no 10-26
     assert "error_id=" in caplog.text
@@ -178,7 +199,7 @@ def test_run_on_demand_range_raised_error_is_http_and_does_not_leak(caplog):
 
 
 def test_unhandled_exception_handler_safe_ref():
-    req = SimpleNamespace(method="POST", url=SimpleNamespace(path="/admin/subjects/62/consolidate"))
+    req = SimpleNamespace(method="POST", url=SimpleNamespace(path="/admin/subjects/101/consolidate"))
     resp = asyncio.run(
         unhandled_exception_handler(req, RuntimeError("Bearer ya29.secret TRACEBACK"))
     )
@@ -209,7 +230,7 @@ def ctx():
     member = User(email="member@umn.edu", is_superuser=False)
     s.add_all([su, admin, member])
     s.flush()
-    study = Study(name="R34 Happiness", provider="fitbit_gh")
+    study = Study(name="Demo study", provider="fitbit_gh")
     s.add(study)
     s.flush()
     s.add_all(
@@ -321,6 +342,33 @@ def test_consolidate_timeout_is_504_with_reason(ctx, monkeypatch):
     assert detail["failed_date"] == "2026-10-24"
     assert detail["completed_dates"] == []
     assert "read timeout" not in r.text
+
+
+def test_consolidate_lock_wait_is_503_and_omits_token_params(ctx, monkeypatch, caplog):
+    as_user, ids, _ = ctx
+    admin = as_user(ids["admin"])
+    subj = _add_subject(admin, ids["study"])
+
+    def fake(db, acct, d):
+        orig = pymysql.err.OperationalError(
+            1205, "Lock wait timeout exceeded; try restarting transaction"
+        )
+        raise OperationalError(
+            "UPDATE provider_accounts SET access_token=%(access_token)s",
+            {"access_token": "SECRET-TOKEN-VALUE"},
+            orig,
+        )
+
+    monkeypatch.setattr(consolidation, "consolidate_day", fake)
+    r = admin.post(f"/admin/subjects/{subj['id']}/consolidate?start=2026-10-24&end=2026-10-24")
+    assert r.status_code == 503, r.text
+    detail = r.json()["detail"]
+    assert detail["reason"] == pull_errors.REASON_DB_LOCK
+    assert detail["failed_date"] == "2026-10-24"
+    assert "re-link" in detail["guidance"].lower() or "Retry shortly" in detail["guidance"]
+    raw = r.text + caplog.text
+    assert "SECRET-TOKEN-VALUE" not in raw
+    assert "Internal Server Error" not in r.text
 
 
 def test_consolidate_integrity_error_is_database_reason(ctx, monkeypatch):

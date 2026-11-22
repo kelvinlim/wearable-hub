@@ -7,13 +7,15 @@ and always attaches a short `error_id` that is also written next to the full tra
 in server logs.
 
 Never put tokens, Authorization headers, upstream response bodies, PHI, SQL, or
-stack traces in the API payload. `str(exc)` is log-only.
+stack traces in the API payload. Logs use a class/errno summary plus traceback
+frames — never `str(exc)`, which SQLAlchemy fills with the statement and params.
 """
 
 from __future__ import annotations
 
 import logging
 import secrets
+import traceback
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
@@ -29,7 +31,12 @@ REASON_PROVIDER_UNREACHABLE = "provider_unreachable"
 REASON_PROVIDER_HTTP = "provider_http"
 REASON_TOKEN_REFRESH = "token_refresh"
 REASON_DATABASE = "database"
+REASON_DB_LOCK = "database_lock"
 REASON_UNEXPECTED = "unexpected"
+
+# MySQL/MariaDB: 1205 lock wait timeout, 1213 deadlock. Detection uses orig.args only
+# so we never stringify a SQLAlchemy statement (bound params can be token ciphertext).
+_MYSQL_LOCK_ERRNOS = frozenset({1205, 1213})
 
 GUIDANCE = {
     REASON_PROVIDER_TIMEOUT: "Retry this date. If it keeps timing out, try a smaller range.",
@@ -44,6 +51,10 @@ GUIDANCE = {
     REASON_DATABASE: (
         "A database error stopped the save. Retry this date. If it repeats, share the ref "
         "with an administrator."
+    ),
+    REASON_DB_LOCK: (
+        "Retry shortly. Another save for this device may still be running "
+        "(for example the nightly job). Do not re-link unless retries keep failing."
     ),
     REASON_UNEXPECTED: "Retry this date. If it repeats, share the ref with an administrator.",
 }
@@ -67,6 +78,47 @@ def unexpected_detail(error_id: str) -> dict:
         "guidance": "Retry. If it persists, share the ref with an administrator.",
         "error_id": error_id,
     }
+
+
+def mysql_errno(exc: BaseException) -> int | None:
+    """Integer driver error code from a wrapped DBAPI exception, or None.
+
+    Reads `orig.args[0]` only — never `str(exc)`, which SQLAlchemy fills with the
+    statement and bound parameters.
+    """
+    orig = getattr(exc, "orig", None)
+    if orig is None:
+        return None
+    args = getattr(orig, "args", ()) or ()
+    if args and isinstance(args[0], int):
+        return int(args[0])
+    return None
+
+
+def is_lock_wait_error(exc: BaseException) -> bool:
+    """True for MySQL 1205/1213, or sqlite 'database is locked' (tests)."""
+    code = mysql_errno(exc)
+    if code in _MYSQL_LOCK_ERRNOS:
+        return True
+    orig = getattr(exc, "orig", None)
+    args = getattr(orig, "args", ()) or () if orig is not None else ()
+    if args and isinstance(args[0], str):
+        low = args[0].lower()
+        return "lock wait timeout" in low or "database is locked" in low or "deadlock" in low
+    return False
+
+
+def safe_exc_summary(exc: BaseException) -> str:
+    """Class name + driver errno. Never SQL, bound params, tokens, or PHI."""
+    name = type(exc).__name__
+    orig = getattr(exc, "orig", None)
+    if orig is None:
+        return name
+    code = mysql_errno(exc)
+    orig_name = type(orig).__name__
+    if code is not None:
+        return f"{name}/{orig_name} errno={code}"
+    return f"{name}/{orig_name}"
 
 
 def classify_exception(exc: BaseException) -> tuple[str, int, str]:
@@ -125,6 +177,12 @@ def classify_exception(exc: BaseException) -> tuple[str, int, str]:
             REASON_DATABASE,
             500,
             "A database constraint stopped saving pulled points.",
+        )
+    if isinstance(exc, OperationalError) and is_lock_wait_error(exc):
+        return (
+            REASON_DB_LOCK,
+            503,
+            "The database timed out waiting to save device authorization.",
         )
     if isinstance(exc, OperationalError):
         return (
@@ -217,13 +275,14 @@ def persist_day_error(db: Session, account_id: int, d: date, reason: str, error_
         row.detail = f"{reason} ref {error_id}"
         row.completed_at = datetime.utcnow()
         db.commit()
-    except Exception:  # noqa: BLE001 — never mask the original pull failure
+    except Exception as exc:  # noqa: BLE001 — never mask the original pull failure
         db.rollback()
-        log.exception(
-            "could not persist consolidate error state error_id=%s account_id=%s date=%s",
+        log.error(
+            "could not persist consolidate error state error_id=%s account_id=%s date=%s summary=%s",
             error_id,
             account_id,
             d.isoformat(),
+            safe_exc_summary(exc),
         )
 
 
@@ -263,15 +322,21 @@ def run_on_demand_range(
                 range_end=end,
                 completed_dates=[row["date"] for row in days],
             )
-            log.exception(
+            log.error(
                 "on-demand consolidate failed error_id=%s subject_id=%s account_id=%s "
-                "provider=%s failed_date=%s reason=%s",
+                "provider=%s failed_date=%s reason=%s summary=%s",
                 failure.error_id,
                 subject_id,
                 account_id,
                 provider,
                 d.isoformat(),
                 failure.reason,
+                safe_exc_summary(exc),
+            )
+            log.error(
+                "on-demand consolidate traceback error_id=%s\n%s",
+                failure.error_id,
+                "".join(traceback.format_tb(exc.__traceback__)),
             )
             persist_day_error(db, account_id, d, failure.reason, failure.error_id)
             raise HTTPException(
