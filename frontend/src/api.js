@@ -35,6 +35,16 @@ export const api = {
     req(`/admin/studies/${studyId}`, { method: "PATCH", body: JSON.stringify(body) }),
   listSubjects: (studyId, includeArchived = false) =>
     req(`/admin/studies/${studyId}/subjects${includeArchived ? "?include_archived=true" : ""}`),
+  coverage: (studyId, { range = "7d", start, end, includeArchived = false } = {}) => {
+    const q = new URLSearchParams();
+    q.set("range", range);
+    if (includeArchived) q.set("include_archived", "true");
+    if (range === "custom") {
+      if (start) q.set("start", start);
+      if (end) q.set("end", end);
+    }
+    return req(`/admin/studies/${studyId}/coverage?${q}`);
+  },
   archiveSubject: (subjectId) =>
     req(`/admin/subjects/${subjectId}/archive`, { method: "POST" }),
   unarchiveSubject: (subjectId) =>

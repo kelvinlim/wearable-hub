@@ -33,3 +33,25 @@ body {
 .dark input[type="date"]::-webkit-calendar-picker-indicator {
   filter: invert(1);
 }
+
+/* Coverage calendar bands. Order in each day cell is heart rate, steps, sleep. */
+.coverage-band-sufficient { background-color: #15803d; }
+.coverage-band-partial { background-color: #d97706; }
+.coverage-band-missing { background-color: #d1d5db; }
+.dark .coverage-band-missing { background-color: #525252; }
+.coverage-band-not-expected {
+  background-color: #e5e7eb;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    #6b7280 0 1.5px,
+    transparent 1.5px 4px
+  );
+}
+.dark .coverage-band-not-expected {
+  background-color: #404040;
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(212, 212, 212, 0.45) 0 1px,
+    transparent 1px 4px
+  );
+}

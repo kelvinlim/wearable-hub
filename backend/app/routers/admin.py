@@ -12,11 +12,11 @@ from datetime import date, datetime, timedelta
 from typing import Annotated
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Response
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Query, Response
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
-from app import consolidation, garmin_backfill, garmin_ingest, oura_ingest, pull_errors
+from app import consolidation, coverage, garmin_backfill, garmin_ingest, oura_ingest, pull_errors
 from app.accounts import revoke_account
 from app.config import get_settings
 from app.crypto import decrypt, encrypt
@@ -1451,6 +1451,39 @@ def _refuse_if_archived_for_sync(db: Session, subject_id: int) -> None:
             status_code=409,
             detail="Subject is archived — unarchive before pulling or requesting a backfill.",
         )
+
+
+@router.get("/studies/{study_id}/coverage")
+def study_coverage(
+    study_id: int,
+    span: Annotated[str, Query(alias="range")] = "7d",
+    start: date | None = None,
+    end: date | None = None,
+    include_archived: bool = False,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Monday–Sunday coverage calendar for every participant in a study.
+
+    ``range`` is ``7d`` (default), ``all``, or ``custom`` (requires ``start`` and
+    ``end``). Archived participants are omitted unless ``include_archived``.
+    Heart rate, steps, and sleep are scored separately; ``on_screen`` / ``to_date``
+    count sufficient heart-rate days over expected days. Study view.
+    """
+    if db.get(Study, study_id) is None:
+        raise HTTPException(status_code=404, detail="Study not found")
+    assert_study_view(db, user, study_id)
+    try:
+        return coverage.build_study_coverage(
+            db,
+            study_id,
+            span=span,
+            custom_start=start,
+            custom_end=end,
+            include_archived=include_archived,
+        )
+    except coverage.CoverageQueryError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/studies/{study_id}/subjects", response_model=list[SubjectStatusOut])
