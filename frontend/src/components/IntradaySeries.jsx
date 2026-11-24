@@ -11,7 +11,9 @@ import {
   metricMeta,
   readoutAt,
   scaleValue,
+  SLEEP_STAGE_LANES,
   sleepPieces,
+  sleepStageLane,
 } from "../utils/coverage";
 
 const PLOT_W = 1440;
@@ -23,7 +25,6 @@ const STAGE_FILL = {
   AWAKE: "#ea580c",
   SLEEP: "#0f766e",
 };
-const STAGE_LANES = ["AWAKE", "REM", "LIGHT", "DEEP"];
 const SERIES_COLOR = {
   heart_rate: "#7a0019",
   steps: "#b45309",
@@ -267,15 +268,18 @@ function SleepChart({ panel, day, hoverMinute, onHover }) {
   const max = Math.max(...pieces.map((p) => p.end));
   const span = Math.max(1, max - min);
   const x = (m) => ((m - min) / span) * PLOT_W;
-  const laneH = PLOT_H / STAGE_LANES.length;
+  const laneH = PLOT_H / SLEEP_STAGE_LANES.length;
   const present = new Set(pieces.map((p) => p.type));
+  const staged = pieces.some((piece) => sleepStageLane(piece.type) != null);
   const hoverX = hoverMinute != null && hoverMinute >= min && hoverMinute <= max ? x(hoverMinute) : null;
   return (
     <div className="mt-2 flex gap-2">
       <div className="flex h-24 w-12 shrink-0 flex-col justify-between self-start py-0.5 text-right text-[10px] leading-none text-gray-400">
-        {STAGE_LANES.map((lane) => (
+        {staged ? SLEEP_STAGE_LANES.map((lane) => (
           <span key={lane}>{lane.toLowerCase()}</span>
-        ))}
+        )) : (
+          <span className="m-auto">sleep</span>
+        )}
       </div>
       <div className="min-w-0 flex-1">
         <svg
@@ -288,8 +292,10 @@ function SleepChart({ panel, day, hoverMinute, onHover }) {
         >
           <rect width={PLOT_W} height={PLOT_H} fill="transparent" />
           {pieces.map((piece, i) => {
-            const lane = STAGE_LANES.indexOf(piece.type);
-            const y = (lane < 0 ? 1 : lane) * laneH + 2;
+            const lane = sleepStageLane(piece.type);
+            // Unstaged sleep (the SLEEP fallback) spans the plot. It is not REM.
+            const y = lane == null ? 4 : lane * laneH + 2;
+            const height = lane == null ? PLOT_H - 8 : laneH - 4;
             const minutes = Math.max(1, Math.round(piece.end - piece.start));
             const label = `${formatClock(piece.start)}–${formatClock(piece.end)} · ${piece.type.toLowerCase()} · ${minutes} min`;
             return (
@@ -298,7 +304,7 @@ function SleepChart({ panel, day, hoverMinute, onHover }) {
                 x={x(piece.start)}
                 y={y}
                 width={Math.max(2, x(piece.end) - x(piece.start))}
-                height={lane < 0 ? laneH - 4 : laneH - 4}
+                height={height}
                 fill={STAGE_FILL[piece.type] || "#64748b"}
                 rx="3"
               >

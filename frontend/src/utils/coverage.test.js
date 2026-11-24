@@ -23,6 +23,7 @@ import {
   seriesFor,
   sliceCoverage,
   sleepPieces,
+  sleepStageLane,
   wakeDate,
   weekdayLetter,
   weekLabel,
@@ -137,6 +138,10 @@ describe("intraday series for the day drill-in", () => {
       ["LIGHT", 22 * 60 - 1440, 2 * 60],
       ["DEEP", 2 * 60, 6 * 60],
     ]);
+    assert.equal(sleepStageLane("LIGHT"), 2);
+    assert.equal(sleepStageLane("REM"), 1);
+    assert.equal(sleepStageLane("SLEEP"), null);
+    assert.equal(sleepStageLane("unknown"), null);
   });
 
   it("builds a heart-rate segment from the local clock and offers extra metrics", () => {

@@ -277,6 +277,18 @@ export const PRIMARY_METRICS = [
   { id: "sleep", label: "Sleep" },
 ];
 
+/** Hypnogram rows, top to bottom. Unstaged sleep is not one of these. */
+export const SLEEP_STAGE_LANES = ["AWAKE", "REM", "LIGHT", "DEEP"];
+
+/**
+ * Lane index for a known stage, or null for unstaged sleep (`SLEEP`) and any
+ * other type. Callers must not draw null in the REM row.
+ */
+export function sleepStageLane(type) {
+  const lane = SLEEP_STAGE_LANES.indexOf(String(type || "").toUpperCase());
+  return lane < 0 ? null : lane;
+}
+
 /**
  * Units we can justify from stored values.
  *
