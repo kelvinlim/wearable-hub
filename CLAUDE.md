@@ -134,7 +134,10 @@ findings. Remaining: live Garmin verification once portal webhooks are registere
 Restricted-scope review.
 
 - **Garmin provider (push model).** Second provider via OAuth 1.0a (`app/providers/garmin.py`,
-  `requests-oauthlib`) — **no refresh tokens, no subscription API**. Garmin **pushes the values**,
+  `requests-oauthlib`) — **no refresh tokens, no subscription API**. **OAuth 1 retires
+  2026-12-31** — cutover plan (not yet implemented):
+  [docs/garmin-oauth2-migration-plan.md](docs/garmin-oauth2-migration-plan.md).
+  Garmin **pushes the values**,
   so there's no pull/consolidation: `app/garmin_ingest.py` lands each push raw in `health_data`,
   resolves the account by Garmin `userId` (stored in `provider_user_id`), and **merges** the mapped
   metrics into `daily_health`/`health_data_points` per-datatype + idempotently (re-pushes
