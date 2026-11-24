@@ -511,3 +511,60 @@ def test_endpoint_custom_range_dims_to_full_weeks(ctx):
     assert _day(body, "2026-11-21", seeded["subject"])["dimmed"] is True
     sub = _sub(body, seeded["subject"])
     assert sub["on_screen"]["expected"] == 3
+
+
+def test_full_calendar_keeps_earlier_scores_and_the_last_seven_window():
+    """One payload can be sliced: pre-enrollment data stays scored, and the grid
+    still reaches six days before local today when enrollment is more recent."""
+    payload = _build(
+        [_subj(enrolled_on=date(2026, 11, 22))],
+        dailies=[_daily(date(2026, 11, 10), steps=5, hr_avg=60, pulled_at=NOW)],
+        span="full",
+    )
+    sub = _sub(payload)
+    assert payload["range"] == "full"
+    assert sub["enrolled_on"] == "2026-11-22"
+    assert sub["all_start"] == "2026-11-22"
+    assert sub["all_end"] == "2026-11-24"
+    assert sub["on_screen"] == sub["to_date"]
+    assert sub["to_date"]["expected"] == 3  # 22, 23, 24
+
+    early = _day(payload, "2026-11-10")
+    assert early["steps"]["total"] == 5
+    assert early["hr"]["hr_avg"] == 60
+    assert early["expected"] is False
+    assert early["reason"] == "before_enrollment"
+    assert early["dimmed"] is True  # outside the all-data window
+
+    # Tuesday Nov 24 → last-7 starts Nov 18, whose Monday is Nov 16.
+    assert _day(payload, "2026-11-16")["dimmed"] is True
+    assert payload["weeks"][0]["dates"][0] <= "2026-11-09"
+
+    seven = _build(
+        [_subj(enrolled_on=date(2026, 11, 22))],
+        dailies=[_daily(date(2026, 11, 10), steps=5, hr_avg=60, pulled_at=NOW)],
+        span="7d",
+    )
+    assert _sub(seven)["to_date"] == sub["to_date"]
+    assert _sub(seven)["on_screen"]["expected"] == 3
+    assert "all_start" not in _sub(seven)
+
+
+def test_endpoint_full_range_exposes_slice_fields(ctx):
+    as_user, ids, Session = ctx
+    seeded = _seed(Session, ids["study"])
+    client = as_user(ids["member"])
+    res = client.get(f"/admin/studies/{ids['study']}/coverage?range=full")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["range"] == "full"
+    sub = _sub(body, seeded["subject"])
+    assert sub["enrolled_on"] == "2026-01-01"
+    assert sub["all_start"] == "2026-01-01"
+    assert sub["all_end"] == "2026-11-24"
+    nov18 = _day(body, "2026-11-18", seeded["subject"])
+    assert nov18["hr"]["status"] == "sufficient"
+    assert nov18["dimmed"] is False
+    # Full uses the all-data window for on_screen. With no collection end before
+    # today, that tally is the same as to_date.
+    assert sub["on_screen"] == sub["to_date"]

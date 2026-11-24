@@ -4,18 +4,30 @@ import {
   COVERAGE_ARCHIVED_KEY,
   COVERAGE_RANGE_KEY,
   SUBJECTS_MODE_KEY,
+  addIsoDays,
   adjacentInRange,
   bandStatus,
+  dayPanels,
   dayTooltip,
+  formatHit,
+  formatMeasure,
+  hitAt,
+  loadCachedCoverage,
+  loadCachedDayPoints,
   metricChoices,
+  readoutAt,
   readCoverageRange,
+  readDayPointsCache,
   readIncludeArchived,
   readSubjectsMode,
   seriesFor,
+  sliceCoverage,
   sleepPieces,
+  sleepStageLane,
   wakeDate,
   weekdayLetter,
   weekLabel,
+  writeCoverageCache,
   writeCoverageRange,
   writeIncludeArchived,
   writeSubjectsMode,
@@ -126,6 +138,10 @@ describe("intraday series for the day drill-in", () => {
       ["LIGHT", 22 * 60 - 1440, 2 * 60],
       ["DEEP", 2 * 60, 6 * 60],
     ]);
+    assert.equal(sleepStageLane("LIGHT"), 2);
+    assert.equal(sleepStageLane("REM"), 1);
+    assert.equal(sleepStageLane("SLEEP"), null);
+    assert.equal(sleepStageLane("unknown"), null);
   });
 
   it("builds a heart-rate segment from the local clock and offers extra metrics", () => {
@@ -147,5 +163,218 @@ describe("intraday series for the day drill-in", () => {
       metricChoices(points).map((m) => m.id),
       ["heart_rate", "steps", "sleep", "stress"],
     );
+    assert.equal(formatMeasure("heart_rate", 72), "72 bpm");
+    assert.equal(formatMeasure("heart_rate_variability", 42), "42 ms");
+    assert.equal(formatMeasure("steps", 120), "120 steps");
+    assert.equal(formatMeasure("oxygen_saturation", 97.5), "97.5 %");
+    // Google Health distance points are millimeter sums; show meters.
+    assert.equal(formatMeasure("distance", 1500), "1.5 m");
+    assert.equal(formatMeasure("stress", 20), "20");
+    assert.equal(formatMeasure("stress", 20).includes("unit"), false);
+  });
+
+  it("stacks heart rate, steps, and sleep, then only extras present that day", () => {
+    const points = [
+      { datatype: "heart_rate_variability", start_time: "2026-11-18T02:00:00Z", end_time: "2026-11-18T02:05:00Z", value: 41, tz_offset_seconds: 0 },
+      { datatype: "oxygen_saturation", start_time: "2026-11-18T02:10:00Z", end_time: "2026-11-18T02:15:00Z", value: 96, tz_offset_seconds: 0 },
+      { datatype: "distance", start_time: "2026-11-17T02:00:00Z", end_time: "2026-11-17T02:05:00Z", value: 1000, tz_offset_seconds: 0 },
+    ];
+    const panels = dayPanels(points, "2026-11-18");
+    assert.deepEqual(panels.map((p) => p.id), ["heart_rate", "steps", "sleep", "heart_rate_variability", "oxygen_saturation"]);
+    assert.equal(panels[0].empty, true);
+    assert.equal(panels[1].empty, true);
+    assert.equal(panels[2].empty, true);
+    assert.equal(panels[3].unit, "ms");
+    assert.equal(panels[4].unit, "%");
+    assert.equal(dayPanels([], "2026-11-18").map((p) => p.id).join(), "heart_rate,steps,sleep");
+  });
+
+  it("reads every series at one local time, with the mark's range and unit", () => {
+    const points = [
+      { datatype: "heart_rate", start_time: "2026-11-18T14:00:00Z", end_time: "2026-11-18T14:05:00Z", value: 72, tz_offset_seconds: 0 },
+      { datatype: "steps", start_time: "2026-11-18T14:00:00Z", end_time: "2026-11-18T14:05:00Z", value: 40, tz_offset_seconds: 0 },
+      {
+        datatype: "sleep",
+        start_time: "2026-11-17T22:00:00Z",
+        end_time: "2026-11-18T06:00:00Z",
+        tz_offset_seconds: 0,
+        stages: [
+          { type: "LIGHT", start_time: "2026-11-17T22:00:00Z", end_time: "2026-11-18T02:00:00Z" },
+          { type: "DEEP", start_time: "2026-11-18T02:00:00Z", end_time: "2026-11-18T06:00:00Z" },
+        ],
+      },
+    ];
+    const panels = dayPanels(points, "2026-11-18");
+    const atTwo = readoutAt(panels, 2 * 60, "2026-11-18");
+    const byId = Object.fromEntries(atTwo.map((row) => [row.id, row]));
+    assert.equal(byId.heart_rate.text, null);
+    assert.equal(byId.steps.text, null);
+    assert.match(byId.sleep.text, /deep · 240 min/);
+    const hr = hitAt(panels[0], 14 * 60, "2026-11-18");
+    assert.equal(formatHit(hr), "14:00–14:05 · 72 bpm");
+    const steps = hitAt(panels[1], 14 * 60, "2026-11-18");
+    assert.equal(formatHit(steps), "14:00–14:05 · 40 steps");
+  });
+});
+
+describe("coverage range slicing and memory cache", () => {
+  function cell(date, extra = {}) {
+    return {
+      date,
+      dimmed: extra.dimmed ?? false,
+      expected: extra.expected ?? true,
+      reason: extra.reason ?? null,
+      hr: extra.hr || { status: "missing", basis: "none", minutes: null, fraction: null, hr_avg: null },
+      steps: extra.steps || { status: "missing", basis: "none", total: null, minutes: null, fraction: null },
+      sleep: extra.sleep || { status: "missing", basis: "none", minutes: null },
+    };
+  }
+
+  function buildFull() {
+    const days = [];
+    for (let iso = "2026-11-09"; iso <= "2026-11-29"; iso = addIsoDays(iso, 1)) {
+      const before = iso < "2026-11-22";
+      const future = iso > "2026-11-24";
+      const day = cell(iso, {
+        expected: !before && !future,
+        reason: future ? "future" : before ? "before_enrollment" : null,
+        dimmed: before || future,
+      });
+      if (iso === "2026-11-10") {
+        day.steps = { status: "sufficient", basis: "daily_total", total: 5, minutes: null, fraction: null };
+        day.hr = { status: "sufficient", basis: "daily_summary", minutes: null, fraction: null, hr_avg: 60 };
+      }
+      if (iso === "2026-11-22") {
+        day.hr = { status: "sufficient", basis: "intraday", minutes: 600, fraction: 0.4, hr_avg: 68 };
+      }
+      days.push(day);
+    }
+    const toDate = { hr_sufficient: 1, steps_sufficient: 0, sleep_sufficient: 0, expected: 3 };
+    return {
+      range: "full",
+      thresholds: { hr_sufficient_minutes: 600, sleep_sufficient_minutes: 240 },
+      subjects: [{
+        id: 1,
+        local_today: "2026-11-24",
+        enrolled_on: "2026-11-22",
+        all_start: "2026-11-22",
+        all_end: "2026-11-24",
+        collection_start: null,
+        collection_end: null,
+        to_date: toDate,
+        days,
+      }],
+    };
+  }
+
+  it("slices last 7 days with Monday padding and keeps to-date totals", () => {
+    const full = buildFull();
+    const view = sliceCoverage(full, { range: "7d" });
+    assert.equal(view.range, "7d");
+    assert.equal(view.weeks[0].dates[0], "2026-11-16");
+    assert.equal(view.weeks.at(-1).dates.at(-1), "2026-11-29");
+    const days = Object.fromEntries(view.subjects[0].days.map((d) => [d.date, d]));
+    assert.equal(days["2026-11-16"].dimmed, true);
+    assert.equal(days["2026-11-18"].dimmed, false);
+    assert.equal(days["2026-11-18"].expected, false);
+    assert.equal(days["2026-11-22"].dimmed, false);
+    assert.equal(days["2026-11-22"].hr.status, "sufficient");
+    assert.equal(days["2026-11-24"].dimmed, false);
+    assert.equal(days["2026-11-25"].dimmed, true);
+    assert.equal(days["2026-11-25"].reason, "future");
+    assert.equal(view.subjects[0].on_screen.expected, 3);
+    assert.equal(view.subjects[0].on_screen.hr_sufficient, 1);
+    assert.equal(view.subjects[0].to_date, full.subjects[0].to_date);
+    assert.equal(days["2026-11-10"], undefined);
+    // Slicing must not rewrite the cached full calendar.
+    const cachedNov20 = full.subjects[0].days.find((d) => d.date === "2026-11-20");
+    assert.equal(cachedNov20.dimmed, true);
+  });
+
+  it("keeps all-data to the all-data window and still finds earlier days in a custom range", () => {
+    const full = buildFull();
+    const all = sliceCoverage(full, { range: "all" });
+    assert.equal(all.weeks[0].dates[0], "2026-11-16");
+    assert.equal(all.subjects[0].on_screen.expected, 3);
+    assert.equal(all.subjects[0].to_date, full.subjects[0].to_date);
+    const custom = sliceCoverage(full, { range: "custom", start: "2026-11-09", end: "2026-11-11" });
+    const nov10 = custom.subjects[0].days.find((d) => d.date === "2026-11-10");
+    assert.equal(nov10.dimmed, false);
+    assert.equal(nov10.steps.total, 5);
+    assert.equal(nov10.expected, false);
+    assert.equal(custom.subjects[0].on_screen.expected, 0);
+    assert.equal(custom.weeks[0].dates[0], "2026-11-09");
+    const later = sliceCoverage(full, { range: "custom", start: "2026-11-30", end: "2026-12-02" });
+    const dec1 = later.subjects[0].days.find((d) => d.date === "2026-12-01");
+    assert.equal(dec1.reason, "future");
+    assert.equal(dec1.hr.status, "missing");
+    assert.equal(dec1.dimmed, false);
+  });
+
+  it("pads a shared week from each participant's own local today", () => {
+    const bare = (id, today) => ({
+      id,
+      local_today: today,
+      enrolled_on: "2026-01-01",
+      all_start: "2026-01-01",
+      all_end: today,
+      collection_start: null,
+      collection_end: null,
+      to_date: { hr_sufficient: 0, steps_sufficient: 0, sleep_sufficient: 0, expected: 1 },
+      days: [],
+    });
+    const full = { range: "full", subjects: [bare(1, "2026-11-24"), bare(2, "2026-11-23")] };
+    const view = sliceCoverage(full, { range: "7d" });
+    assert.equal(view.weeks[0].dates[0], "2026-11-16");
+    const a = Object.fromEntries(view.subjects[0].days.map((d) => [d.date, d]));
+    const b = Object.fromEntries(view.subjects[1].days.map((d) => [d.date, d]));
+    assert.equal(a["2026-11-17"].dimmed, true);
+    assert.equal(a["2026-11-18"].dimmed, false);
+    assert.equal(a["2026-11-24"].dimmed, false);
+    assert.equal(b["2026-11-17"].dimmed, false);
+    assert.equal(b["2026-11-24"].dimmed, true);
+    assert.equal(view.subjects[0].to_date, full.subjects[0].to_date);
+  });
+
+  it("keeps the full calendar and opened days in memory only", async () => {
+    const store = memoryStore();
+    const cache = new Map();
+    const dayCache = new Map();
+    let coverageCalls = 0;
+    let pointCalls = 0;
+    const payload = { range: "full", subjects: [] };
+    const first = await loadCachedCoverage(4, false, async () => {
+      coverageCalls += 1;
+      return payload;
+    }, cache);
+    const second = await loadCachedCoverage(4, false, async () => {
+      coverageCalls += 1;
+      return payload;
+    }, cache);
+    assert.equal(coverageCalls, 1);
+    assert.equal(first, second);
+    await loadCachedCoverage(4, true, async () => {
+      coverageCalls += 1;
+      return { range: "full", subjects: [{ id: 9 }] };
+    }, cache);
+    assert.equal(coverageCalls, 2);
+    writeCoverageCache(4, false, payload, cache);
+    assert.equal(store.getItem("wh-coverage-range"), null);
+
+    const points = await loadCachedDayPoints(8, "2026-11-20", async () => {
+      pointCalls += 1;
+      return [{ datatype: "steps", value: 3 }];
+    }, dayCache);
+    const again = await loadCachedDayPoints(8, "2026-11-20", async () => {
+      pointCalls += 1;
+      return [{ datatype: "steps", value: 9 }];
+    }, dayCache);
+    assert.equal(pointCalls, 1);
+    assert.equal(again, points);
+    assert.equal(again[0].value, 3);
+    await assert.rejects(loadCachedDayPoints(8, "2026-11-21", async () => {
+      throw new Error("offline");
+    }, dayCache));
+    assert.equal(readDayPointsCache(8, "2026-11-21", dayCache), null);
   });
 });

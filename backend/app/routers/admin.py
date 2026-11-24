@@ -1465,10 +1465,14 @@ def study_coverage(
 ) -> dict:
     """Monday–Sunday coverage calendar for every participant in a study.
 
-    ``range`` is ``7d`` (default), ``all``, or ``custom`` (requires ``start`` and
-    ``end``). Archived participants are omitted unless ``include_archived``.
+    ``range`` is ``7d`` (default), ``all``, ``custom`` (requires ``start`` and
+    ``end``), or ``full``. ``full`` is one sliceable calendar: every stored day
+    plus the last-7 window, with ``all_start`` / ``all_end`` / ``enrolled_on`` so
+    a client can derive last-7 and custom views (dimmed Monday–Sunday padding,
+    on-screen totals) without another query. ``to_date`` does not depend on the
+    slice. Archived participants are omitted unless ``include_archived``.
     Heart rate, steps, and sleep are scored separately; ``on_screen`` / ``to_date``
-    count sufficient heart-rate days over expected days. Study view.
+    count sufficient days over expected days. Study view.
     """
     if db.get(Study, study_id) is None:
         raise HTTPException(status_code=404, detail="Study not found")

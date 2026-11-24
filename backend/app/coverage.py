@@ -36,6 +36,14 @@ Days outside the collection window, before the participant was added (when no
 window start is set), or after the participant's local today are not expected
 (hatched), not missing. "Last 7 days" still renders full Monday–Sunday weeks;
 dates outside that window are marked dimmed.
+
+``span="full"`` is the sliceable calendar: every local day from the earliest of
+first data, the all-data start, and six days before local today, through the
+latest of local today and last data, Monday–Sunday padded. ``dimmed`` on that
+payload is the all-data window. ``all_start``, ``all_end``, and ``enrolled_on``
+let a client re-slice last-7 and custom ranges (including week padding) without
+another query. ``to_date`` does not depend on the slice. ``on_screen`` on the
+full payload is the all-data tally; clients recompute it for the visible window.
 """
 
 from __future__ import annotations
@@ -53,7 +61,7 @@ STEPS_SUFFICIENT_MINUTES = 600
 SLEEP_SUFFICIENT_MINUTES = 240
 DAY_MINUTES = 24 * 60
 MAX_CUSTOM_DAYS = 800
-SPANS = frozenset({"7d", "all", "custom"})
+SPANS = frozenset({"7d", "all", "custom", "full"})
 
 THRESHOLDS = {
     "hr_sufficient_minutes": HR_SUFFICIENT_MINUTES,
@@ -301,7 +309,7 @@ def assemble_coverage(
     payload.
     """
     if span not in SPANS:
-        raise CoverageQueryError("range must be 7d, all, or custom")
+        raise CoverageQueryError("range must be 7d, all, custom, or full")
     if span == "custom":
         if custom_start is None or custom_end is None:
             raise CoverageQueryError("custom range requires start and end")
@@ -375,10 +383,26 @@ def assemble_coverage(
             grid_end = ctx["sel_end"]
         built.append(ctx)
 
+    if span == "full" and built:
+        # Wider than the all-data window so a client can slice last-7 (which reaches
+        # six days before local today, even for someone enrolled this week) and any
+        # custom range that overlaps stored days. Pre-enrollment weeks stay in the
+        # payload with their scores; the all-data slice drops them except as padding.
+        starts: list[date] = []
+        ends: list[date] = []
+        for ctx in built:
+            starts.append(min(ctx["sel_start"], ctx["today"] - timedelta(days=6)))
+            ends.append(ctx["sel_end"])
+            if ctx["data_start"]:
+                starts.append(ctx["data_start"])
+            if ctx["data_end"]:
+                ends.append(ctx["data_end"])
+        grid_start, grid_end = min(starts), max(ends)
+
     if grid_start is None or grid_end is None:
         # No participants. Still describe the requested window so the toolbar is honest.
         anchor = now.date()
-        if span == "7d":
+        if span in ("7d", "full"):
             grid_start, grid_end = anchor - timedelta(days=6), anchor
         elif span == "all":
             grid_start = grid_end = anchor
@@ -430,7 +454,8 @@ def _subject_context(
     enrolled = _enrolled_on(subj, offset)
     # Copy so later subjects don't see a mutated enrolled_on on a shared dict.
     subj = {**subj, "enrolled_on": enrolled}
-    first_data = _first_data_date(rows, account_ids, hr_minutes, step_minutes, sleep_by_account)
+    data_start, data_end = _data_bounds(rows, account_ids, hr_minutes, step_minutes, sleep_by_account)
+    first_data = data_start
     denom_start = subj.get("collection_start") or enrolled or first_data or today
     denom_end = today
     if subj.get("collection_end") and subj["collection_end"] < denom_end:
@@ -438,9 +463,11 @@ def _subject_context(
     if denom_end < denom_start:
         denom_end = denom_start
 
+    # ``full`` uses the all-data selection for dimming, on_screen, and to_date.
+    # The wider grid is applied in assemble_coverage.
     if span == "7d":
         sel_start, sel_end = today - timedelta(days=6), today
-    elif span == "all":
+    elif span in ("all", "full"):
         sel_start, sel_end = denom_start, today
     else:
         sel_start, sel_end = custom_start, custom_end
@@ -459,6 +486,9 @@ def _subject_context(
         "offset": offset,
         "sel_start": sel_start,
         "sel_end": sel_end,
+        "data_start": data_start,
+        "data_end": data_end,
+        "calendar_span": span,
         "last_pull": max((r["pulled_at"] for r in rows if r.get("pulled_at")), default=None),
     }
     ctx["on_screen"] = _tally_span(ctx, sel_start, sel_end)
@@ -502,7 +532,7 @@ def _tally_span(ctx: dict, start: date, end: date) -> dict:
 
 def _subject_payload(item: dict, grid: list[date]) -> dict:
     subj = item["subject"]
-    return {
+    out = {
         "id": subj["id"],
         "participant_id": subj.get("participant_id"),
         "subject_label": subj.get("subject_label"),
@@ -517,6 +547,13 @@ def _subject_payload(item: dict, grid: list[date]) -> dict:
         "to_date": item["to_date"],
         "days": [_cell(item, d) for d in grid],
     }
+    if item.get("calendar_span") == "full":
+        # Selection bounds for the all-data slice. ``dimmed`` on each day already
+        # uses this window; clients override it when they slice last-7 or custom.
+        out["enrolled_on"] = _iso(subj.get("enrolled_on"))
+        out["all_start"] = _iso(item["sel_start"])
+        out["all_end"] = _iso(item["sel_end"])
+    return out
 
 
 def _latest_offset(rows: list[dict]) -> int | None:
@@ -527,7 +564,8 @@ def _latest_offset(rows: list[dict]) -> int | None:
     return dated[-1]["tz_offset_seconds"]
 
 
-def _first_data_date(rows, account_ids, hr_minutes, step_minutes, sleep_by_account) -> date | None:
+def _data_bounds(rows, account_ids, hr_minutes, step_minutes, sleep_by_account) -> tuple[date | None, date | None]:
+    """Earliest and latest local date with a daily row, heart-rate/steps aggregate, or sleep."""
     dates: list[date] = [r["local_date"] for r in rows]
     acct = set(account_ids)
     for (account_id, local_date) in list(hr_minutes) + list(step_minutes):
@@ -535,7 +573,9 @@ def _first_data_date(rows, account_ids, hr_minutes, step_minutes, sleep_by_accou
             dates.append(local_date)
     for account_id in account_ids:
         dates.extend(sleep_by_account.get(account_id, {}).keys())
-    return min(dates) if dates else None
+    if not dates:
+        return None, None
+    return min(dates), max(dates)
 
 
 def _tally() -> dict:
