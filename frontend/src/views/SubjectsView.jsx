@@ -15,6 +15,8 @@ import {
   filterSubjectList, readStoredFlag, writeStoredFlag,
   SHOW_ARCHIVED_KEY, SHOW_REGISTERED_KEY,
 } from "../utils/subjects";
+import { readSubjectsMode, writeSubjectsMode } from "../utils/coverage";
+import CoverageView from "./CoverageView";
 import { Card, Button, Badge, Input, Th, Td, Empty, Field } from "../ui";
 import SubjectDetail from "./SubjectDetail";
 
@@ -140,6 +142,7 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
   const [deleting, setDeleting] = useState(null); // subject in the delete-confirm modal, or null
   const [showArchived, setShowArchived] = useState(() => readStoredFlag(SHOW_ARCHIVED_KEY, false));
   const [showRegistered, setShowRegistered] = useState(() => readStoredFlag(SHOW_REGISTERED_KEY, false));
+  const [mode, setMode] = useState(() => readSubjectsMode());
   const [sort, setSort] = useState({ key: "linked", dir: "desc" }); // linked-first by default
 
   const onSort = (k) =>
@@ -167,6 +170,7 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
   }, [studyId, showArchived, guard]);
   useEffect(() => { writeStoredFlag(SHOW_ARCHIVED_KEY, showArchived); }, [showArchived]);
   useEffect(() => { writeStoredFlag(SHOW_REGISTERED_KEY, showRegistered); }, [showRegistered]);
+  useEffect(() => { writeSubjectsMode(mode); }, [mode]);
   useEffect(() => {
     setSelected(null);
     setSubjects([]);
@@ -187,25 +191,49 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
   return (
     <div className="space-y-5">
       <Card className="overflow-hidden">
-        <div className="flex items-center justify-between gap-3 border-b border-gray-100 p-4 dark:border-neutral-800">
-          <h3 className="font-display text-base font-semibold text-maroon dark:text-gold">Subjects</h3>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 p-4 dark:border-neutral-800">
           <div className="flex items-center gap-3">
-            <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-gray-600 dark:text-neutral-300">
-              <input
-                type="checkbox"
-                checked={showRegistered}
-                onChange={(e) => setShowRegistered(e.target.checked)}
-              />
-              Show registered
-            </label>
-            <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-gray-600 dark:text-neutral-300">
-              <input
-                type="checkbox"
-                checked={showArchived}
-                onChange={(e) => setShowArchived(e.target.checked)}
-              />
-              Show archived
-            </label>
+            <h3 className="font-display text-base font-semibold text-maroon dark:text-gold">Subjects</h3>
+            <div role="group" aria-label="Subjects view" className="inline-flex rounded-lg border border-gray-200 p-0.5 text-xs dark:border-neutral-700">
+              <button
+                type="button"
+                aria-pressed={mode === "list"}
+                onClick={() => setMode("list")}
+                className={"rounded-md px-2.5 py-1 font-medium " + (mode === "list" ? "bg-maroon text-white" : "text-gray-600 hover:bg-gray-50 dark:text-neutral-300 dark:hover:bg-neutral-800")}
+              >
+                List
+              </button>
+              <button
+                type="button"
+                aria-pressed={mode === "coverage"}
+                onClick={() => setMode("coverage")}
+                className={"rounded-md px-2.5 py-1 font-medium " + (mode === "coverage" ? "bg-maroon text-white" : "text-gray-600 hover:bg-gray-50 dark:text-neutral-300 dark:hover:bg-neutral-800")}
+              >
+                Coverage
+              </button>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            {mode === "list" && (
+              <>
+                <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-gray-600 dark:text-neutral-300">
+                  <input
+                    type="checkbox"
+                    checked={showRegistered}
+                    onChange={(e) => setShowRegistered(e.target.checked)}
+                  />
+                  Show registered
+                </label>
+                <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-gray-600 dark:text-neutral-300">
+                  <input
+                    type="checkbox"
+                    checked={showArchived}
+                    onChange={(e) => setShowArchived(e.target.checked)}
+                  />
+                  Show archived
+                </label>
+              </>
+            )}
             {canAdmin && (
               <Button onClick={() => setAdding((a) => !a)}>
                 <Plus className="h-4 w-4" /> Add subject
@@ -239,6 +267,9 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
           </form>
         )}
 
+        {mode === "coverage" ? (
+          <CoverageView studyId={studyId} guard={guard} />
+        ) : (
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead className="border-b border-gray-100 dark:border-neutral-800">
@@ -354,9 +385,10 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
             </tbody>
           </table>
         </div>
+        )}
       </Card>
 
-      {selected && <SubjectDetail subject={selected} canAdmin={canAdmin} guard={guard} onChanged={load} />}
+      {mode === "list" && selected && <SubjectDetail subject={selected} canAdmin={canAdmin} guard={guard} onChanged={load} />}
 
       {editing && (
         <EditSubjectModal

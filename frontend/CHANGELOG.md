@@ -4,6 +4,25 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
+## [0.9.6] — 2026-11-24
+
+### Added
+
+- **Participant coverage calendar** on the Subjects page (List | Coverage). One row per
+  participant, Monday–Sunday weeks stacked vertically. Each day is three bands — heart rate,
+  steps, sleep — scored separately: green sufficient, amber partial, gray missing, hatched
+  not expected (outside the collection window, before the participant was added, or a future
+  day). Last 7 days keeps full weeks and dims dates outside the window. Dates are each
+  participant's local day. Sleep is shown on the wake-up date. A stored step total of 0 is
+  recorded data, not a missing day. Hover a day for heart-rate coverage, the step total and
+  recording coverage, and sleep duration. Click a day to open that day's intraday series
+  below the calendar, with a metric selector and previous/next day. The row shows the last
+  successful pull and heart-rate totals (on screen and to date), with steps and sleep counts
+  underneath. **Active only** and **Last 7 days** are the defaults. The status filter and
+  the date range are separate and persist in `localStorage` (`wh-coverage-include-archived`,
+  `wh-coverage-range`, `wh-coverage-start`, `wh-coverage-end`), as does List vs Coverage
+  (`wh-subjects-mode`).
+
 ## [0.9.5] — 2026-11-19
 
 ### Fixed
