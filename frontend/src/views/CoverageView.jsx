@@ -8,6 +8,7 @@ import IntradaySeries from "../components/IntradaySeries";
 import {
   COVERAGE_END_KEY,
   COVERAGE_START_KEY,
+  MAX_COVERAGE_DAYS,
   addIsoDays,
   adjacentInRange,
   bandStatus,
@@ -15,9 +16,16 @@ import {
   dayTooltip,
   formatHours,
   formatLastPull,
+  isoSpanDays,
+  loadCachedCoverage,
+  loadCachedDayPoints,
+  mergeDayPoints,
+  readCoverageCache,
   readCoverageRange,
+  readDayPointsCache,
   readIncludeArchived,
   readIsoPref,
+  sliceCoverage,
   totalsTitle,
   weekdayLetter,
   weekLabel,
@@ -39,14 +47,18 @@ export default function CoverageView({ studyId, guard }) {
   const [range, setRange] = useState(() => readCoverageRange());
   const [start, setStart] = useState(() => readIsoPref(COVERAGE_START_KEY));
   const [end, setEnd] = useState(() => readIsoPref(COVERAGE_END_KEY));
-  const [data, setData] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [full, setFull] = useState(() => (
+    studyId == null ? null : readCoverageCache(studyId, readIncludeArchived())
+  ));
+  const [loading, setLoading] = useState(() => (
+    studyId != null && !readCoverageCache(studyId, readIncludeArchived())
+  ));
   const [selected, setSelected] = useState(null);
-  const [metric, setMetric] = useState("heart_rate");
   const [points, setPoints] = useState([]);
   const [pointsLoading, setPointsLoading] = useState(false);
   const [pointsError, setPointsError] = useState("");
   const [tip, setTip] = useState(null);
+  const [shownKey, setShownKey] = useState("");
 
   useEffect(() => { writeIncludeArchived(includeArchived); }, [includeArchived]);
   useEffect(() => { writeCoverageRange(range); }, [range]);
@@ -54,46 +66,78 @@ export default function CoverageView({ studyId, guard }) {
   useEffect(() => { writeIsoPref(COVERAGE_END_KEY, end); }, [end]);
 
   const customInvalid = range === "custom" && (!start || !end || end < start);
+  const customTooLong = range === "custom" && !!start && !!end && isoSpanDays(start, end) > MAX_COVERAGE_DAYS;
+  const data = useMemo(() => {
+    if (!full || customInvalid || customTooLong) return null;
+    return sliceCoverage(full, {
+      range,
+      start: range === "custom" ? start : undefined,
+      end: range === "custom" ? end : undefined,
+    });
+  }, [full, range, start, end, customInvalid, customTooLong]);
 
   useEffect(() => {
     setSelected(null);
-    setData(null);
   }, [studyId]);
 
+  // One full calendar per study and archived flag. Range changes only slice `full`.
   useEffect(() => {
-    if (studyId == null || customInvalid) return undefined;
+    if (studyId == null) return undefined;
+    const cached = readCoverageCache(studyId, includeArchived);
+    if (cached) {
+      setFull(cached);
+      setLoading(false);
+      return undefined;
+    }
     let alive = true;
     setLoading(true);
     guard(async () => {
-      const body = await api.coverage(studyId, {
-        range,
-        start: range === "custom" ? start : undefined,
-        end: range === "custom" ? end : undefined,
-        includeArchived,
-      });
-      if (alive) setData(body);
+      const body = await loadCachedCoverage(studyId, includeArchived, () =>
+        api.coverage(studyId, { range: "full", includeArchived }));
+      if (alive) setFull(body);
     }).finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [studyId, range, start, end, includeArchived, customInvalid, guard]);
+  }, [studyId, includeArchived, guard]);
 
   const selectedSubject = data?.subjects?.find((s) => s.id === selected?.subjectId) || null;
   const selectedDay = selectedSubject?.days?.find((d) => d.date === selected?.date) || null;
 
+  const selectionKey = selected ? `${selected.subjectId}|${selected.date}` : "";
+  if (selectionKey !== shownKey) {
+    setShownKey(selectionKey);
+    if (!selected) {
+      setPoints([]);
+      setPointsLoading(false);
+      setPointsError("");
+    } else {
+      const prevDay = addIsoDays(selected.date, -1);
+      const todayHit = readDayPointsCache(selected.subjectId, selected.date);
+      const prevHit = readDayPointsCache(selected.subjectId, prevDay);
+      if (todayHit && prevHit) {
+        setPoints(mergeDayPoints(todayHit, prevHit));
+        setPointsLoading(false);
+        setPointsError("");
+      } else {
+        setPoints([]);
+        setPointsLoading(true);
+        setPointsError("");
+      }
+    }
+  }
+
   useEffect(() => {
     if (!selected) return undefined;
+    const prevDay = addIsoDays(selected.date, -1);
+    if (readDayPointsCache(selected.subjectId, selected.date) && readDayPointsCache(selected.subjectId, prevDay)) {
+      return undefined;
+    }
     let alive = true;
-    setPointsLoading(true);
-    setPointsError("");
-    setPoints([]);
-    const prev = addIsoDays(selected.date, -1);
     Promise.all([
-      api.dayPoints(selected.subjectId, selected.date),
-      api.dayPoints(selected.subjectId, prev).catch(() => []),
+      loadCachedDayPoints(selected.subjectId, selected.date, (id, day) => api.dayPoints(id, day)),
+      loadCachedDayPoints(selected.subjectId, prevDay, (id, day) => api.dayPoints(id, day)).catch(() => []),
     ]).then(([todayPts, prevPts]) => {
       if (!alive) return;
-      const other = (todayPts || []).filter((p) => p.datatype !== "sleep");
-      const sleep = [...(todayPts || []), ...(prevPts || [])].filter((p) => p.datatype === "sleep");
-      setPoints([...other, ...sleep]);
+      setPoints(mergeDayPoints(todayPts, prevPts));
     }).catch((e) => {
       if (alive) setPointsError(e.message || "Could not load this day");
     }).finally(() => { if (alive) setPointsLoading(false); });
@@ -165,12 +209,16 @@ export default function CoverageView({ studyId, guard }) {
         on the wake-up date.
       </p>
 
+      {loading && full && (
+        <p className="px-4 pt-2 text-[11px] text-gray-400">Updating coverage…</p>
+      )}
       {customInvalid && <Empty>Pick a start date on or before the end date.</Empty>}
-      {!customInvalid && loading && !data && <Empty>Loading coverage…</Empty>}
-      {!customInvalid && data && data.subjects.length === 0 && <Empty>No participants in this view.</Empty>}
+      {customTooLong && <Empty>That range is longer than {MAX_COVERAGE_DAYS} days.</Empty>}
+      {!customInvalid && !customTooLong && loading && !data && <Empty>Loading coverage…</Empty>}
+      {!customInvalid && !customTooLong && data && data.subjects.length === 0 && <Empty>No participants in this view.</Empty>}
 
-      {!customInvalid && data && data.subjects.length > 0 && (
-        <div className="overflow-x-auto">
+      {!customInvalid && !customTooLong && data && data.subjects.length > 0 && (
+        <div className={cn("overflow-x-auto", loading && full && "opacity-70")}>
           <table className="w-full border-collapse">
             <thead>
               <tr className="border-b border-gray-100 text-left text-[11px] font-semibold uppercase tracking-wider text-gray-400 dark:border-neutral-800">
@@ -215,8 +263,6 @@ export default function CoverageView({ studyId, guard }) {
           points={points}
           loading={pointsLoading}
           error={pointsError}
-          metric={metric}
-          onMetric={setMetric}
           onPrev={() => prevDate && setSelected({ subjectId: selectedSubject.id, date: prevDate })}
           onNext={() => nextDate && setSelected({ subjectId: selectedSubject.id, date: nextDate })}
           prevDisabled={!prevDate}
