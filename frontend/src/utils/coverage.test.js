@@ -32,6 +32,7 @@ import {
   writeIncludeArchived,
   writeSubjectsMode,
 } from "./coverage.js";
+import { filterSubjectList, SHOW_ARCHIVED_KEY, SHOW_REGISTERED_KEY } from "./subjects.js";
 
 function memoryStore(seed = {}) {
   const data = { ...seed };
@@ -173,20 +174,20 @@ describe("intraday series for the day drill-in", () => {
     assert.equal(formatMeasure("stress", 20).includes("unit"), false);
   });
 
-  it("stacks heart rate, steps, and sleep, then only extras present that day", () => {
+  it("stacks sleep, then heart rate and steps, then only extras present that day", () => {
     const points = [
       { datatype: "heart_rate_variability", start_time: "2026-11-18T02:00:00Z", end_time: "2026-11-18T02:05:00Z", value: 41, tz_offset_seconds: 0 },
       { datatype: "oxygen_saturation", start_time: "2026-11-18T02:10:00Z", end_time: "2026-11-18T02:15:00Z", value: 96, tz_offset_seconds: 0 },
       { datatype: "distance", start_time: "2026-11-17T02:00:00Z", end_time: "2026-11-17T02:05:00Z", value: 1000, tz_offset_seconds: 0 },
     ];
     const panels = dayPanels(points, "2026-11-18");
-    assert.deepEqual(panels.map((p) => p.id), ["heart_rate", "steps", "sleep", "heart_rate_variability", "oxygen_saturation"]);
+    assert.deepEqual(panels.map((p) => p.id), ["sleep", "heart_rate", "steps", "heart_rate_variability", "oxygen_saturation"]);
     assert.equal(panels[0].empty, true);
     assert.equal(panels[1].empty, true);
     assert.equal(panels[2].empty, true);
     assert.equal(panels[3].unit, "ms");
     assert.equal(panels[4].unit, "%");
-    assert.equal(dayPanels([], "2026-11-18").map((p) => p.id).join(), "heart_rate,steps,sleep");
+    assert.equal(dayPanels([], "2026-11-18").map((p) => p.id).join(), "sleep,heart_rate,steps");
   });
 
   it("reads every series at one local time, with the mark's range and unit", () => {
@@ -205,14 +206,16 @@ describe("intraday series for the day drill-in", () => {
       },
     ];
     const panels = dayPanels(points, "2026-11-18");
+    assert.deepEqual(panels.map((p) => p.id).slice(0, 3), ["sleep", "heart_rate", "steps"]);
     const atTwo = readoutAt(panels, 2 * 60, "2026-11-18");
     const byId = Object.fromEntries(atTwo.map((row) => [row.id, row]));
+    assert.equal(atTwo[0].id, "sleep");
     assert.equal(byId.heart_rate.text, null);
     assert.equal(byId.steps.text, null);
     assert.match(byId.sleep.text, /deep · 240 min/);
-    const hr = hitAt(panels[0], 14 * 60, "2026-11-18");
+    const hr = hitAt(panels.find((p) => p.id === "heart_rate"), 14 * 60, "2026-11-18");
     assert.equal(formatHit(hr), "14:00–14:05 · 72 bpm");
-    const steps = hitAt(panels[1], 14 * 60, "2026-11-18");
+    const steps = hitAt(panels.find((p) => p.id === "steps"), 14 * 60, "2026-11-18");
     assert.equal(formatHit(steps), "14:00–14:05 · 40 steps");
   });
 });
@@ -376,5 +379,29 @@ describe("coverage range slicing and memory cache", () => {
       throw new Error("offline");
     }, dayCache));
     assert.equal(readDayPointsCache(8, "2026-11-21", dayCache), null);
+  });
+
+  it("applies Show registered like the subjects list and leaves the cached calendar intact", () => {
+    const full = buildFull();
+    full.subjects[0].registered = true;
+    full.subjects.push({
+      ...full.subjects[0],
+      id: 2,
+      registered: false,
+      days: full.subjects[0].days.map((d) => ({ ...d })),
+    });
+    const linked = filterSubjectList(full.subjects, { showRegistered: true });
+    assert.deepEqual(linked.map((s) => s.id), [1]);
+    const view = sliceCoverage({ ...full, subjects: linked }, { range: "7d" });
+    assert.deepEqual(view.subjects.map((s) => s.id), [1]);
+    assert.equal(full.subjects.length, 2);
+    assert.equal(full.subjects[1].registered, false);
+    // Show registered does not change the archive cache key.
+    const cache = new Map();
+    writeCoverageCache(4, false, full, cache);
+    writeCoverageCache(4, true, { ...full, subjects: full.subjects }, cache);
+    assert.equal(cache.size, 2);
+    assert.equal(SHOW_REGISTERED_KEY, "wh-show-registered");
+    assert.equal(SHOW_ARCHIVED_KEY, "wh-show-archived");
   });
 });

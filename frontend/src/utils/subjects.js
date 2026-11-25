@@ -1,8 +1,8 @@
 /** Subjects-list filters that compose with the server-side archive flag.
 
-Show archived is applied by `GET /admin/studies/{id}/subjects?include_archived=…`.
+Show archived is applied by the list and coverage requests (`include_archived`).
 Show registered is client-side on the `registered` (linked) flag already on each row.
-Both on is an intersection of the two.
+Both views share `wh-show-registered` and `wh-show-archived`. Both on is an intersection.
 */
 
 // Console UI prefs: same "1"/"0" localStorage encoding as Hide PHI (`wearable-hide-phi`)
