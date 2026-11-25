@@ -538,6 +538,7 @@ def _subject_payload(item: dict, grid: list[date]) -> dict:
         "subject_label": subj.get("subject_label"),
         "status": subj.get("status"),
         "archived": bool(subj.get("archived")),
+        "registered": bool(subj.get("registered")),
         "collection_start": _iso(subj.get("collection_start")),
         "collection_end": _iso(subj.get("collection_end")),
         "tz_offset_seconds": item["offset"],
@@ -754,8 +755,11 @@ def _load_subjects(db: Session, study_id: int, include_archived: bool) -> list[d
         )
     )
     by_subject: dict[int, list[int]] = defaultdict(list)
+    registered_subjects: set[int] = set()
     for acct in accounts:
         by_subject[acct.subject_id].append(acct.id)
+        if acct.registered:
+            registered_subjects.add(acct.subject_id)
     return [
         {
             "id": s.id,
@@ -763,6 +767,7 @@ def _load_subjects(db: Session, study_id: int, include_archived: bool) -> list[d
             "subject_label": s.subject_label,
             "status": s.status,
             "archived": s.archived_at is not None,
+            "registered": s.id in registered_subjects,
             "collection_start": s.collection_start,
             "collection_end": s.collection_end,
             "created_at": s.created_at,

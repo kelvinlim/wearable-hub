@@ -5,6 +5,7 @@ import { usePhiPrivacy } from "../phiPrivacy";
 import { subjectDisplayName } from "../utils/phi";
 import { Badge, Empty } from "../ui";
 import IntradaySeries from "../components/IntradaySeries";
+import { filterSubjectList } from "../utils/subjects";
 import {
   COVERAGE_END_KEY,
   COVERAGE_START_KEY,
@@ -23,14 +24,12 @@ import {
   readCoverageCache,
   readCoverageRange,
   readDayPointsCache,
-  readIncludeArchived,
   readIsoPref,
   sliceCoverage,
   totalsTitle,
   weekdayLetter,
   weekLabel,
   writeCoverageRange,
-  writeIncludeArchived,
   writeIsoPref,
 } from "../utils/coverage";
 
@@ -41,17 +40,16 @@ const BAND_CLASS = {
   not_expected: "coverage-band-not-expected",
 };
 
-export default function CoverageView({ studyId, guard }) {
+export default function CoverageView({ studyId, guard, showRegistered = false, showArchived = false }) {
   const { hidePhi } = usePhiPrivacy();
-  const [includeArchived, setIncludeArchived] = useState(() => readIncludeArchived());
   const [range, setRange] = useState(() => readCoverageRange());
   const [start, setStart] = useState(() => readIsoPref(COVERAGE_START_KEY));
   const [end, setEnd] = useState(() => readIsoPref(COVERAGE_END_KEY));
   const [full, setFull] = useState(() => (
-    studyId == null ? null : readCoverageCache(studyId, readIncludeArchived())
+    studyId == null ? null : readCoverageCache(studyId, showArchived)
   ));
   const [loading, setLoading] = useState(() => (
-    studyId != null && !readCoverageCache(studyId, readIncludeArchived())
+    studyId != null && !readCoverageCache(studyId, showArchived)
   ));
   const [selected, setSelected] = useState(null);
   const [points, setPoints] = useState([]);
@@ -60,30 +58,33 @@ export default function CoverageView({ studyId, guard }) {
   const [tip, setTip] = useState(null);
   const [shownKey, setShownKey] = useState("");
 
-  useEffect(() => { writeIncludeArchived(includeArchived); }, [includeArchived]);
   useEffect(() => { writeCoverageRange(range); }, [range]);
   useEffect(() => { writeIsoPref(COVERAGE_START_KEY, start); }, [start]);
   useEffect(() => { writeIsoPref(COVERAGE_END_KEY, end); }, [end]);
 
   const customInvalid = range === "custom" && (!start || !end || end < start);
   const customTooLong = range === "custom" && !!start && !!end && isoSpanDays(start, end) > MAX_COVERAGE_DAYS;
+  const visible = useMemo(() => {
+    if (!full) return null;
+    return { ...full, subjects: filterSubjectList(full.subjects || [], { showRegistered }) };
+  }, [full, showRegistered]);
   const data = useMemo(() => {
-    if (!full || customInvalid || customTooLong) return null;
-    return sliceCoverage(full, {
+    if (!visible || customInvalid || customTooLong) return null;
+    return sliceCoverage(visible, {
       range,
       start: range === "custom" ? start : undefined,
       end: range === "custom" ? end : undefined,
     });
-  }, [full, range, start, end, customInvalid, customTooLong]);
+  }, [visible, range, start, end, customInvalid, customTooLong]);
 
   useEffect(() => {
     setSelected(null);
   }, [studyId]);
 
-  // One full calendar per study and archived flag. Range changes only slice `full`.
+  // One full calendar per study and Show archived. Show registered only filters.
   useEffect(() => {
     if (studyId == null) return undefined;
-    const cached = readCoverageCache(studyId, includeArchived);
+    const cached = readCoverageCache(studyId, showArchived);
     if (cached) {
       setFull(cached);
       setLoading(false);
@@ -92,12 +93,12 @@ export default function CoverageView({ studyId, guard }) {
     let alive = true;
     setLoading(true);
     guard(async () => {
-      const body = await loadCachedCoverage(studyId, includeArchived, () =>
-        api.coverage(studyId, { range: "full", includeArchived }));
+      const body = await loadCachedCoverage(studyId, showArchived, () =>
+        api.coverage(studyId, { range: "full", includeArchived: showArchived }));
       if (alive) setFull(body);
     }).finally(() => { if (alive) setLoading(false); });
     return () => { alive = false; };
-  }, [studyId, includeArchived, guard]);
+  }, [studyId, showArchived, guard]);
 
   const selectedSubject = data?.subjects?.find((s) => s.id === selected?.subjectId) || null;
   const selectedDay = selectedSubject?.days?.find((d) => d.date === selected?.date) || null;
@@ -166,15 +167,6 @@ export default function CoverageView({ studyId, guard }) {
   return (
     <>
       <div className="flex flex-wrap items-center gap-3 border-b border-gray-100 px-4 py-3 dark:border-neutral-800">
-        <Segmented
-          label="Participants"
-          value={includeArchived ? "archived" : "active"}
-          onChange={(id) => setIncludeArchived(id === "archived")}
-          options={[
-            { id: "active", label: "Active only" },
-            { id: "archived", label: "Include archived" },
-          ]}
-        />
         <Segmented
           label="Date range"
           value={range}

@@ -4,24 +4,19 @@ All notable changes to Wearable Hub are documented here. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this is pre-1.0, so it tracks
 milestone progress rather than released versions.
 
-## [0.9.7] — 2026-11-24
+## [0.9.8] — 2026-11-25
 
 ### Changed
 
-- **Coverage day view is stacked.** Opening a calendar day shows heart rate, steps, and sleep
-  together (each with its own y-axis; empty series stay visible), then any other datatype stored
-  that day. Heart rate, steps, and the other midnight-to-midnight series share an x-axis. Sleep
-  keeps a bedtime-to-wake axis so the previous evening is not squeezed into 00:00–24:00. A shared
-  crosshair lists every series at the hovered time. Marks and the tooltip show the local time
-  range, the value, and a unit (bpm, steps, ms, %, meters, sleep stage plus minutes). Point
-  tables use the same units and stay collapsed until a panel is expanded. No extra day-point
-  requests — the existing day fetch already returns every series.
-- **Last 7 days / All data / Custom no longer refetch.** The console loads `range=full` once per
-  study and include-archived setting, keeps that calendar in memory only (not `localStorage`),
-  and slices the other ranges in the browser. The grid stays up while a new study or archived
-  toggle is loading. Opened days are cached the same way, so previous/next does not download a
-  day again. `to_date` stays the server tally; on-screen totals and Monday–Sunday dimming are
-  recomputed for the slice. Scoring rules are unchanged.
+- **Coverage uses the Subjects list filters.** Show registered and Show archived are the same
+  checkboxes and the same `localStorage` keys (`wh-show-registered`, `wh-show-archived`) on List
+  and Coverage. Show archived still asks the server to include archived participants. Show
+  registered still keeps only linked participants, now applied to the coverage calendar in the
+  browser. The in-memory coverage cache stays one full calendar per study and archived setting,
+  so toggling Show registered does not refetch.
+- **Day view leads with sleep.** Stacked panels are sleep, then heart rate, then steps, then any
+  other series stored that day. Hover units, the bedtime-to-wake sleep axis, and the collapsed
+  tables are unchanged.
 
 ## [0.9.7] — 2026-11-24
 

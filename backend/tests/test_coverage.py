@@ -298,6 +298,17 @@ def test_custom_range_rejects_inverted_and_huge_windows():
         )
 
 
+def test_registered_matches_a_linked_account_and_stays_false_otherwise():
+    payload = _build(
+        [
+            _subj(id=1, registered=True),
+            _subj(id=2, participant_id="P-2", account_ids=[11], registered=False),
+        ]
+    )
+    assert _sub(payload, 1)["registered"] is True
+    assert _sub(payload, 2)["registered"] is False
+
+
 def test_archived_participants_sort_after_active():
     payload = _build(
         [
@@ -364,7 +375,9 @@ def _seed(Session, study_id, *, archived=False, collection_start=None, collectio
     )
     db.add(subj)
     db.flush()
-    acct = ProviderAccount(subject_id=subj.id, provider="fitbit_gh", entry_code=f"CODE{subj.id}")
+    acct = ProviderAccount(
+        subject_id=subj.id, provider="fitbit_gh", entry_code=f"CODE{subj.id}", registered=True
+    )
     db.add(acct)
     db.flush()
     db.add(
@@ -464,6 +477,7 @@ def test_endpoint_scores_stored_points_and_hides_archived(ctx):
     assert body["range"] == "7d"
     assert body["thresholds"]["hr_sufficient_minutes"] == 600
     assert [s["id"] for s in body["subjects"]] == [seeded["subject"]]
+    assert body["subjects"][0]["registered"] is True
 
     nov18 = _day(body, "2026-11-18", seeded["subject"])
     assert nov18["hr"]["status"] == "sufficient"

@@ -2,11 +2,13 @@
 
 Filters persist with the same localStorage style as Hide PHI and the Subjects
 list: `wh-*` keys, booleans as `"1"` / `"0"`. The date-range mode is the
-string `7d` | `all` | `custom` (default `7d`). Active-only is the default.
+string `7d` | `all` | `custom` (default `7d`). Show registered and Show
+archived are the Subjects list flags, not a coverage-only control.
 
 The calendar payload itself is not stored. One `range=full` response is kept
-in an in-memory map (per study and include-archived flag) and last-7 / custom
-windows are sliced from it. Opened intraday days are cached the same way.
+in an in-memory map (per study and Show archived) and last-7 / custom
+windows are sliced from it. Show registered filters that payload in memory.
+Opened intraday days are cached the same way.
 */
 
 import { readStoredFlag, writeStoredFlag } from "./subjects.js";
@@ -277,6 +279,9 @@ export const PRIMARY_METRICS = [
   { id: "sleep", label: "Sleep" },
 ];
 
+/** Day-view stack: sleep, then heart rate, then steps, then extras present that day. */
+export const DAY_PANEL_ORDER = ["sleep", "heart_rate", "steps"];
+
 /** Hypnogram rows, top to bottom. Unstaged sleep is not one of these. */
 export const SLEEP_STAGE_LANES = ["AWAKE", "REM", "LIGHT", "DEEP"];
 
@@ -370,13 +375,13 @@ export function metricChoices(points) {
 }
 
 /**
- * Heart rate, steps, and sleep always, then any other datatype that has a
+ * Sleep, heart rate, and steps always, then any other datatype that has a
  * point on this local day. Sleep from the previous evening is included when
  * it wakes on `day` (see seriesFor).
  */
 export function dayPanels(points, day) {
   const extras = [];
-  const known = new Set(PRIMARY_METRICS.map((m) => m.id));
+  const known = new Set(DAY_PANEL_ORDER);
   const scoped = (points || []).filter((point) => {
     if (!day || point.datatype === "sleep") return true;
     const local = localIsoDate(point.start_time || point.end_time, point.tz_offset_seconds);
@@ -386,7 +391,7 @@ export function dayPanels(points, day) {
     if (!point.datatype || known.has(point.datatype) || extras.includes(point.datatype)) continue;
     if (seriesFor(scoped, point.datatype, day).length) extras.push(point.datatype);
   }
-  return [...PRIMARY_METRICS.map((m) => m.id), ...extras].map((id) => {
+  return [...DAY_PANEL_ORDER, ...extras].map((id) => {
     const meta = metricMeta(id);
     const series = seriesFor(scoped, id, day);
     return { id, label: meta.label, unit: meta.unit || "", series, empty: series.length === 0 };

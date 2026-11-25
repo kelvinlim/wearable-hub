@@ -1470,7 +1470,8 @@ def study_coverage(
     plus the last-7 window, with ``all_start`` / ``all_end`` / ``enrolled_on`` so
     a client can derive last-7 and custom views (dimmed Monday–Sunday padding,
     on-screen totals) without another query. ``to_date`` does not depend on the
-    slice. Archived participants are omitted unless ``include_archived``.
+    slice.     Archived participants are omitted unless ``include_archived``. ``registered``
+    is the same linked flag as the subjects list (any provider account linked).
     Heart rate, steps, and sleep are scored separately; ``on_screen`` / ``to_date``
     count sufficient days over expected days. Study view.
     """

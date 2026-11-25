@@ -214,26 +214,22 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
             </div>
           </div>
           <div className="flex items-center gap-3">
-            {mode === "list" && (
-              <>
-                <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-gray-600 dark:text-neutral-300">
-                  <input
-                    type="checkbox"
-                    checked={showRegistered}
-                    onChange={(e) => setShowRegistered(e.target.checked)}
-                  />
-                  Show registered
-                </label>
-                <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-gray-600 dark:text-neutral-300">
-                  <input
-                    type="checkbox"
-                    checked={showArchived}
-                    onChange={(e) => setShowArchived(e.target.checked)}
-                  />
-                  Show archived
-                </label>
-              </>
-            )}
+            <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-gray-600 dark:text-neutral-300">
+              <input
+                type="checkbox"
+                checked={showRegistered}
+                onChange={(e) => setShowRegistered(e.target.checked)}
+              />
+              Show registered
+            </label>
+            <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-gray-600 dark:text-neutral-300">
+              <input
+                type="checkbox"
+                checked={showArchived}
+                onChange={(e) => setShowArchived(e.target.checked)}
+              />
+              Show archived
+            </label>
             {canAdmin && (
               <Button onClick={() => setAdding((a) => !a)}>
                 <Plus className="h-4 w-4" /> Add subject
@@ -268,7 +264,12 @@ export default function SubjectsView({ studyId, studyProvider = "fitbit_gh", can
         )}
 
         {mode === "coverage" ? (
-          <CoverageView studyId={studyId} guard={guard} />
+          <CoverageView
+            studyId={studyId}
+            guard={guard}
+            showRegistered={showRegistered}
+            showArchived={showArchived}
+          />
         ) : (
         <div className="overflow-x-auto">
           <table className="w-full">
